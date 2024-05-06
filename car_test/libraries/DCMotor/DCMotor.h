@@ -34,7 +34,7 @@ class _DCMotor
 public:
 	_DCMotor();
 	~_DCMotor();
-
+	
 	void Initialization(uint32_t fHz = 30000);
 	void Go(uint8_t speed);
 	uint16_t Go(uint8_t speed, uint16_t distance);
@@ -81,6 +81,8 @@ private:
 	uint8_t Cumulate_WORB_FirstNumber(uint8_t track_eight,uint8_t track_seven);
 
 	uint16_t speed[101];
+
+	float getOffset(uint8_t arr[]);
 	
 };
 

@@ -186,7 +186,7 @@ def Servo(angle):
     S1.duty((angle + 90) / 180 * 10 + 2.5)
 
 
-Servo(5)  # 初始化45朝下,为了后面摄像头初始获取阈值
+Servo(-45)  # 初始化45朝下,为了后面摄像头初始获取阈值
 time.sleep(1)
 
 
@@ -502,7 +502,7 @@ def Space_Moddel():
     task2 = kpu.load("/sd/space.kmodel")
     typepic = ['other', 'space']
     Type_Map = [0, 0]
-    for i in range(5):
+    for i in range(50):
         imge = sensor.snapshot()
         imge = imge.resize(224, 224)  # 使用图像处理函数处理原图像
         imge.pix_to_ai()
@@ -520,6 +520,7 @@ def Space_Moddel():
         img.draw_string(0, 200, "t:%dms" % (t), scale=2, color=(255, 0, 0))
         lcd.display(img)
     print(typepic[max_index])
+    print(Type_Map)
     kpu.deinit(task2)
     Sensor_Track()
     del task2

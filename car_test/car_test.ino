@@ -12,6 +12,7 @@
 #include <Ultrasonic.h>
 #include <math.h>
 #include <string.h>
+#include <Pid.h>
 
 /**************************************************************************************************
 Zigbee之间通讯延时说明：TFT屏幕150ms够了
@@ -182,7 +183,7 @@ typedef enum
 } Recieve_ToSalvecar;
 
 /******************接收信息储存变量     Start********************/
-
+uint8_t Find_SpeicalRoad = true;
 // 蜂鸣器报警接收
 uint8_t recieve_alarm[6];
 // 语音播报 回转 RTC时间 天气和气温
@@ -204,13 +205,19 @@ uint8_t move_flag = 0;
 uint8_t traffic_sign = 0;
 // 主车数据接受完成
 uint8_t data_complete = 0;
+
+uint8_t data1 = 0;
+uint8_t data2 = 0;
+uint8_t data3 = 0;
+uint8_t data4 = 0;
+uint8_t data5 = 0;
 /******************接收信息储存变量     End********************/
 
 /*********************自用变量  Start**************************/
 // 寻找特殊地形标志位
 uint8_t find_space = 0;
 // 视觉循迹与红外循迹切换，一般写在按键里，0为红外，1为视觉
-uint8_t track_mode = 1;
+uint8_t track_mode = 0;
 // 寻找完特殊形式,继续循迹
 uint8_t cross_spacefloor = 0;
 // 小车路径
@@ -450,6 +457,9 @@ void MainCar_Information(void)
   {
     data_complete = 1;
   }
+  else if (ZigBee_command[2] == AGV_CMD_Data1)
+  {
+  }
 }
 
 /************************************************************************************************************
@@ -607,8 +617,7 @@ void ZigBeeRx_Handler(uint8_t *mar)
 leftspeed、rightspeed：速度为60,正负表示左转或右转 【返 回 值】：	无返回
 【简    例】：  Turn_Conner(90,-90,180); 小车右转180°
 ***********************************************************************************************************/
-void Turn_Conner_TypeDelay(int16_t leftspeed, int16_t rightspeed,
-                           uint16_t angle)
+void Turn_Conner_TypeDelay(int16_t leftspeed, int16_t rightspeed, uint16_t angle)
 {
   delay(200);
   DCMotor.SpeedCtr(leftspeed, rightspeed);
@@ -621,8 +630,7 @@ void Turn_Conner_TypeDelay(int16_t leftspeed, int16_t rightspeed,
 leftspeed、rightspeed：速度为60,正负表示左转或右转 【返 回 值】：	无返回
 【简    例】：  TurnConner_Code_TypeCode(90,-90,180); 小车右转180°
 ***********************************************************************************************************/
-void Turn_Conner_TypeCode(int16_t leftspeed, int16_t rightspeed,
-                          uint16_t angle)
+void Turn_Conner_TypeCode(int16_t leftspeed, int16_t rightspeed, uint16_t angle)
 {
   delay(200);
   DCMotor.SpeedCtr(leftspeed, rightspeed);
@@ -639,7 +647,7 @@ void CarTrack(uint8_t speed, uint8_t mode)
   Clear_Code();  // 清除循迹
   if (mode == 0) // 红外循迹
   {
-    DCMotor.CarTrack(speed);  // 红外循迹
+    Normal_Track(speed);      // 红外循迹
     code_value = Read_Code(); // 读取码盘值
     if (code_value > 2300)    // 如果满盘值大于2300,表示特殊地形在十字路口中间，所以路径+1
     {
@@ -654,28 +662,6 @@ void CarTrack(uint8_t speed, uint8_t mode)
     DCMotor.GoSelfDefine(47, 54, 420); // 十字路口前前进码盘值，前面两个参数为左轮速度和右路速度
   }
   delay(500);
-}
-
-void CarTrack_Select(uint8_t speed, uint8_t mode)
-{
-  if (mode == 0) // 红外循迹
-  {
-    DCMotor.CarTrack(speed); // 红外循迹
-  }
-  else // 视觉循迹
-  {
-    OpenMV_Track(speed, 0, 0); // 视觉循迹
-  }
-  delay(500);
-}
-
-void CarTrack_Distance(uint8_t distance, uint8_t mode)
-{
-  if (mode == 0)
-    TCRT5000_Crack(50, distance);
-  else
-    OpenMV_Track_Distance(50, distance);
-  delay(1000);
 }
 
 // 右转加延迟
@@ -708,27 +694,108 @@ void TurnBack(uint8_t speed, uint8_t mode) // 回转
   TurnLeft(speed, mode);
 }
 
-// 直行+距离
-void CarGo(uint8_t speed, uint8_t distance) // 左转
+typedef enum
 {
-  Clear_Code();
-  // DCMotor.Go(speed);
-  DCMotor.SpeedCtr(speed - 4, speed + 4);
-  delay((int)(27.7778 * distance));
-  DCMotor.Stop();
-  delay(500);
+  Track_NORMAL = 0,  // 正常循迹到黑线停止
+  Track_ENCODER = 1, // 固定码盘循迹
+} Track_t;
+
+Track_t Track_Mode = Track_NORMAL;
+uint8_t encode_value = 0; // 码盘循迹值
+bool enter_white = false;
+
+void Normal_Track(uint8_t Car_Spend)
+{
+  uint8_t H8_N, Q7_N;
+  uint8_t Q7[7], H8[8], ALL_TRACK[15];
+  while (true)
+  {
+    Q7_N = ExtSRAMInterface.ExMem_Read(TRACK_ADDR + 1);
+    H8_N = ExtSRAMInterface.ExMem_Read(TRACK_ADDR);
+
+    for (int8_t i = 6; i >= 0; --i)
+    {
+      Q7[i] = (Q7_N >> i) & 0x01;
+      H8[i] = (H8_N >> i) & 0x01;
+      ALL_TRACK[i * 2] = H8[i];
+      ALL_TRACK[i * 2 + 1] = Q7[i];
+    }
+    H8[7] = (H8_N >> 7) & 1;
+    ALL_TRACK[14] = H8[7];
+
+    if ((H8[0] + Q7[0] + H8[7] + Q7[6]) < 2)
+    { // 到十字路口
+      Pid.PidData_Clear();
+      DCMotor.Stop();
+      return;
+    }
+    else if (Q7[2] && Q7[3] && Q7[4])
+    {
+      if (!enter_white)
+      {
+        enter_white = true;
+        Pid.PidData_Clear();
+        DCMotor.Stop();
+      }
+      if (Special_Road_Identify())
+      { // 特殊地形
+        Serial.println("special");
+        return;
+      }
+      else
+      { // 白卡
+        Pid.Calculate_pid(getOffset(ALL_TRACK));
+        DCMotor.SpeedCtr(Car_Spend + Pid.PID_value - 10, Car_Spend - Pid.PID_value - 10);
+      }
+    }
+    else if (enter_white && !Q7[3] && Q7[2] && Q7[4])
+    {
+      Find_SpeicalRoad = true;
+      enter_white = false;
+    }
+    else
+    { // 正常循迹
+      Pid.Calculate_pid(getOffset(ALL_TRACK));
+      DCMotor.SpeedCtr(Car_Spend + Pid.PID_value, Car_Spend - Pid.PID_value);
+    }
+  }
 }
 
-// 倒车+距离
-void CarBack(uint8_t speed, uint8_t distance) // 回转
+float getOffset(uint8_t arr[])
 {
-  // DCMotor.Back(speed);
-  DCMotor.SpeedCtr(-(speed - 4), -(speed + 4));
-  delay((int)(27.7778 * distance));
-  DCMotor.Stop();
-  delay(500);
-}
+  int8_t all_weights[15] = {0};
+  for (uint8_t i = 1; i < 14; i++)
+  {
+    for (uint8_t j = i - 1; j <= i + 1; j++)
+    {
+      all_weights[i] += arr[j];
+    }
+  }
 
+  int8_t minimum = 3;
+  for (uint8_t i = 1; i < 14; i++)
+  {
+    if (minimum > all_weights[i])
+      minimum = all_weights[i];
+  }
+
+  int8_t errorValue1 = 0, errorValue2 = 14;
+  for (;;)
+  {
+    if (all_weights[++errorValue1] == minimum)
+      break;
+  }
+  for (;;)
+  {
+    if (all_weights[--errorValue2] == minimum)
+      break;
+  }
+
+  // 平均之后计算误差值
+  float errorValue = 7.0 - (errorValue1 + errorValue2) / 2.0;
+
+  return errorValue;
+}
 // 红外循迹
 void TCRT5000_Crack(uint8_t Car_Speed, uint32_t distance)
 {
@@ -1254,7 +1321,6 @@ void K210_TrackControl(uint8_t cmd)
 void K210_Check_Space()
 {
   uint8_t sapcefind_buf[8] = {0x55, 0x02, 0x91, 0x05, 0x00, 0x00, 0x00, 0xBB};
-  Serial.println("特殊地形识别");
   Command.Judgment(sapcefind_buf); // 计算校验和
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, sapcefind_buf, 8);
 }
@@ -1767,7 +1833,7 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
   Serial.println(find_space);
 
   if (find_space == 0)
-    Space_Distinguish(); // 特殊地形识别
+    Special_Road_Identify(); // 特殊地形识别
 
   Serial.print("cross_spacefloor");
   Serial.println(cross_spacefloor);
@@ -1949,7 +2015,7 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
                   delay(50);
                   K210_TrackControl(0x02);
                   delay(500);
-                  Space_Distinguish(); // 特殊地形识别
+                  Special_Road_Identify(); // 特殊地形识别
                 }
                 break;
               }
@@ -2139,8 +2205,13 @@ void OpenMV_Track_Distance(uint8_t Car_Speed, uint8_t distance)
 }
 // 特殊地形识别，现在模型只有特殊地形和非特殊地形，非特殊地形直接标记为白卡十字路口，
 // 后期可通过模型训练在优化,但关于视觉循迹的地方都得改
-void Space_Distinguish(void)
+uint8_t Special_Road_Identify(void)
 {
+  if (!Find_SpeicalRoad)
+  {
+    return false;
+  }
+
   uint8_t space_buf[8];  // 接收识别结果
   uint8_t clear_buf[21]; // 清空地址缓存
   uint8_t Space_Result = 0;
@@ -2162,17 +2233,9 @@ void Space_Distinguish(void)
     if (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
     {
       ExtSRAMInterface.ExMem_Read_Bytes(0x6038, Data_OpenMVBuf, 8); // 读取地址数据
-      Space_Result = Data_OpenMVBuf[3];                             // 特殊地形识别结果
-      break;
+      Find_SpeicalRoad = false;
+      return Data_OpenMVBuf[3]; // 特殊地形识别结果
     }
-  }
-  // 存在特殊地形,直接调整车身,冲过去
-  if (Space_Result == 1)
-  {
-    BackDis_GoSpace(4, 12, 0);         // 调整三次
-    DCMotor.GoSelfDefine(47, 54, 960); // 前进960码，直接冲过特殊地形
-    cross_spacefloor = 1;
-    find_space = 1;
   }
 }
 // 视觉循迹特殊地形循迹调整车身
@@ -4410,7 +4473,7 @@ void Car_Move_FirstRoute(car_state *car)
     if (!(y == 0 && x == 0)) // 如果相邻两个点不是同一个点则执行任务
     {
       // 任务
-      Task_Detal(car[Recode_FristRoute].car_x, car[Recode_FristRoute].car_y);
+      // Task_Detal(car[Recode_FristRoute].car_x, car[Recode_FristRoute].car_y);
       // 方向更改
       Auto_Forward(x, y, track_mode);
       // 循迹
@@ -4520,10 +4583,10 @@ void KEY_Handler(uint8_t k_value)
     Serial.println("move");
     break;
   case 2:
-    K210_Scan_ModeTwo(2);
+    Normal_Track(30);
     break;
   case 3:
-    K210_Traffic_Disc('B');
+    Serial.print(Special_Road_Identify());
     break;
   case 4:
     RotationLED_Traffic(1);
