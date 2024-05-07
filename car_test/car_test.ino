@@ -14,85 +14,7 @@
 #include <string.h>
 #include <Pid.h>
 
-/**************************************************************************************************
-Zigbee之间通讯延时说明：TFT屏幕150ms够了
-红外间隔：50ms以上
-任务转弯点调节角度
-自动跑路径
-自动避让和转交十字路口
-十字路口倒车入库
-从车跑路径
-循迹控制
-码盘控制
-K210交互函数
-
-1.道闸标志物
-2.LED显示标志物
-3.立体车库标志物(A/B)
-4.语音播报标志物
-5.烽火台报警标志物
-6.智能TFT屏标志物(A/B)
-7.智能路灯标志物
-8.无线充电标志物
-9.ETC系统标志物
-10.智能交通灯标志物(A/B)
-11.特殊地形标志物
-12.立体显示标志物(旋转LED)测试
-13.自动评分系统与竞赛平台
-14.小创语音识别
-Zigbee回传数据查询任务
-K210回传数据
-
-字符转换
-**************************************************************************************************/
-/*  Zigbee节点              设备
-    01 (0x01)               主车
-    02 (0x02)               从车
-    03 (0x03)               智能道闸标志物
-    04 (0x04)               智能显示标志物
-    05 (0x05)               智能立体车库标志物(B)
-    06 (0x06)               智能公交站标志物
-    07 (0x07)               智能报警台标志物
-    08 (0x08)               多功能信息显示标志物(B)
-    09 (0x09)               智能路灯标志物
-    10 (0x0A)               智能无线充电标志物
-    11 (0x0B)               多功能信息显示标志物(A)
-    12 (0x0C)               智能ETC系统标志物
-    13 (0x0D)               智能立体车库标志物(A)
-    14 (0x0E)               智能交通信号灯标志物(A)
-    15 (0x0F)               智能交通信号灯标志物(B)
-    16 (0x10)               特殊地形标志物
-    17 (0x11)               智能立体显示标志物
-    18 (0x12)               多功能信息显示标志物(C)
-    19 (0x13)               智能交通信号灯标志物(C)
-    20 (0x14)               智能交通信号灯标志物(D)
-*/
-/***************************************************************************************************
-车速
-循迹配速 50-
-转弯配速 90车身 25cm
-684码盘 =90度
-1000码盘 = 40cm
-900码 = 36.5cm = 1000ms(50配速直行,不循迹)
-       地图
-左右长47 75 75 47 地图黑线长度厘米
-上下长40 60 60 40 地图黑线长度厘米
-**************************************************************************************************/
-/*********************************************************自定义字库 * Start***************************************************/
-// 语音播报使用，请勿删除，此处现在
-uint8_t Number_Voice[] = {0xC1, 0xE3, 0xD2, 0xBB, 0xB6, 0xFE,
-                          0xC8, 0xFD, 0xCB, 0xC4, // 零一二三四五六七八九十
-                          0xCE, 0xE5, 0xC1, 0xF9, 0xC6, 0xDF,
-                          0xB0, 0xCB, 0xBE, 0xC5, 0xCA, 0xAE};
-uint8_t Weather_Code[][4] = {{0xB4, 0xF3, 0xB7, 0xE7}, {0xB6, 0xE0, 0xD4, 0xC6}, {0xC7, 0xE7, 0X01, 0X01}, // 大风 多云 晴
-                             {0xD0, 0xA1, 0xD1, 0xA9},
-                             {0xD0, 0xA1, 0xD3, 0xEA},
-                             {0xD2, 0xF5, 0xCC, 0xEC}}; // 小雪 小雨 阴天
-
-/*********************************************************自定义字库 * END***************************************************/
-
-/*********************************************************宏定义 * Start***************************************************/
-// 接收的长度
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 宏定义 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 #define MAX 70            // 路径个数
 #define TurnAngle 6.48    // 延时转弯(转换为角度得比例)
 #define TurnCarSpeed 90   // 转弯速度
@@ -101,26 +23,19 @@ uint8_t Weather_Code[][4] = {{0xB4, 0xF3, 0xB7, 0xE7}, {0xB6, 0xE0, 0xD4, 0xC6},
 #define Code_ToLength 25  // 码盘转厘米
 #define Speed50_Delay 29  // 29ms = 1CM(延时前进，速度为50)
 #define Ultrasonic_Flag 1 // 超声波测量  1：返回厘米  0：返回英寸
-/*********************************************************宏定义 * End***************************************************/
 
-/*********************************************************地图 * Start***************************************************/
-// 方向(只有上下左右)
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 枚举定义 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 typedef enum
 {
-  AGV_UP = 1,         // 上                        Y    ^                           上1
-  AGV_LEFT = 2,       // 左                             |         A1 地图定义方向 G1
-  AGV_DOWN = 3,       // 下                             |                            ^
-  AGV_RIGHT = 4,      // 右                             | |
-  AGV_LEFT_UP = 5,    // 左上                           |         3左 | 4右
-  AGV_LEFT_DOWN = 6,  // 左下                           | |
-  AGV_RIGHT_UP = 7,   // 右上                           | V
-  AGV_RIGHT_DOWN = 8, // 右下                           |         A7 下2 G7
-} Direction_t;        //                               -------------------------------------------------------------->
-                      //                               X
-
-/*********************************************************地图 * End***************************************************/
-
-/****************从车通讯主车    Start*********************/
+  AGV_UP = 1,         // 上
+  AGV_LEFT = 2,       // 左
+  AGV_DOWN = 3,       // 下
+  AGV_RIGHT = 4,      // 右
+  AGV_LEFT_UP = 5,    // 左上
+  AGV_LEFT_DOWN = 6,  // 左下
+  AGV_RIGHT_UP = 7,   // 右上
+  AGV_RIGHT_DOWN = 8, // 右下
+} Direction_t;        // 方向
 typedef enum
 {
   ToMainCar_Ultrasonic = 0X0B,    // 超声波距离
@@ -132,23 +47,7 @@ typedef enum
   ToMainCar_CarPlate = 0x15,      // 车牌
   ToMainCar_BGarageFloor = 0x2B,  // B车库初始层数
   ToMainCar_AGarageFloor = 0x2A,  // A车库初始层数key
-} Tomain_Maincmd;
-
-uint8_t Define_Zero48[48];      // 自定义上传区间
-uint8_t Light_Level[2];         // 路灯档位(初始 设置)
-uint8_t Ultrasonic_Distance[3]; // 超声波距离(百 十 个(cm))
-uint8_t Beacon_Alarm[6];        // 烽火台开启
-uint8_t License_Plate[6];       // 车牌
-uint8_t Init_AGarage_Floor;     // A车库当前层数
-uint8_t Init_BGarage_Floor;     // B车库当前层数
-uint8_t QR_Length6[6];
-uint8_t carfirstroute[2] = {0x00, 0x00};
-uint8_t QR_Alarm[6];
-uint8_t color_reult[2];
-uint8_t WIFI_start[3];
-/****************从车通讯主车    End*********************/
-
-/****************从车接收主车通讯    Start*********************/
+} Tomain_Maincmd;                 // 发送数据
 typedef enum
 {
   ReceiverMainCar_AGV_Movement = 0xD0,  // 从车启动
@@ -180,66 +79,65 @@ typedef enum
   AGV_CMD_Data3 = 0xEC, // 预留数据
   AGV_CMD_Data4 = 0xED, // 预留数据
   AGV_CMD_Data5 = 0xEE, // 预留数据
-} Recieve_ToSalvecar;
-
-/******************接收信息储存变量     Start********************/
-uint8_t Find_SpeicalRoad = true;
-// 蜂鸣器报警接收
-uint8_t recieve_alarm[6];
-// 语音播报 回转 RTC时间 天气和气温
-uint8_t Weather_Temp[2];
-uint8_t Rtc_Data[6];
-// 显示距离信息
-uint8_t Distance_Display = 0;
-// 显示初始点坐标信息
-uint8_t FirstPoint[2] = {0};
-// 退出等待标志位
-uint8_t quit_wait = 0;
-// 车牌
-uint8_t Road_Code[6];
-// 发送主车命令标志位
-uint8_t send_move_flag = 0;
-// 发送主车命令标志位
-uint8_t move_flag = 0;
-// 发送主车命令标志位
-uint8_t traffic_sign = 0;
-// 主车数据接受完成
-uint8_t data_complete = 0;
-
-uint8_t data1 = 0;
-uint8_t data2 = 0;
-uint8_t data3 = 0;
-uint8_t data4 = 0;
-uint8_t data5 = 0;
-/******************接收信息储存变量     End********************/
-
-/*********************自用变量  Start**************************/
-// 寻找特殊地形标志位
-uint8_t find_space = 0;
-// 视觉循迹与红外循迹切换，一般写在按键里，0为红外，1为视觉
-uint8_t track_mode = 0;
-// 寻找完特殊形式,继续循迹
-uint8_t cross_spacefloor = 0;
-// 小车路径
+} Recieve_ToSalvecar;   // 接收数据
+typedef enum
+{
+  Track_NORMAL = 0,  // 正常循迹到黑线停止
+  Track_ENCODER = 1, // 固定码盘循迹
+} Track_t;           // 循迹状态
 typedef struct
 {
   uint16_t car_step; // 任务
   uint16_t car_x;    // 路径坐标x-'A'
   uint16_t car_y;    // 路径坐标'7'-Y
-} car_state;         // 小车路径
+} car_state;         // 路径结构体
+
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 数据定义 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+// 外部数据
+uint8_t ZigBee_command[8];      // 读取Zigbee传输数据
+uint8_t ZigBee_judge;           // 判断校验位
+uint8_t Define_Zero48[48];      // 发送给主车数据
+uint8_t Light_Level[2];         // 路灯档位(初始 设置)
+uint8_t Ultrasonic_Distance[3]; // 超声波距离(百 十 个(cm))
+uint8_t Beacon_Alarm[6];        // 烽火台开启
+uint8_t Init_AGarage_Floor;     // A车库当前层数
+uint8_t Init_BGarage_Floor;     // B车库当前层数
+uint8_t QR_Length6[6];          // 二维码数据
+uint8_t color_reult[2];         // 二维码颜色
+uint8_t WIFI_start[3];          // 无线充电桩开启码
+uint8_t recieve_alarm[6];       // 蜂鸣器报警接收
+uint8_t Weather_Temp[2];        // 语音播报 天气和气温
+uint8_t Rtc_Data[6];            // RTC时间
+uint8_t Distance_Display = 0;   // 显示距离信息
+uint8_t FirstPoint[2] = {0};    // 显示初始点坐标信息
+uint8_t quit_wait = 0;          // 退出等待标志位
+uint8_t Road_Code[6];           // 车牌
+uint8_t data1 = 0;              // 预留数据位1
+uint8_t data2 = 0;              // 预留数据位2
+uint8_t data3 = 0;              // 预留数据位3
+uint8_t data4 = 0;              // 预留数据位4
+uint8_t data5 = 0;              // 预留数据位5
+
+// 功能标识位
+Track_t Track_Mode = Track_NORMAL; // 循迹状态
+uint8_t send_move_flag = 0;        // 发送主车命令标志位
+uint8_t move_flag = 0;             // 发送主车命令标志位
+uint8_t traffic_sign = 0;          // 发送主车命令标志位
+uint8_t data_complete = 0;         // 主车数据接受完成
+uint8_t Find_SpeicalRoad = true;   // 寻找特殊地形
+uint8_t find_space = 0;            // 寻找特殊地形标志位
+uint8_t track_mode = 0;            // 视觉循迹与红外循迹切换，一般写在按键里，0为红外，1为视觉
+uint8_t cross_spacefloor = 0;      // 寻找完特殊形式,继续循迹
 
 // 小车路径方向
-Direction_t car_dir; // 小车方向
-// 第一段路径
-car_state Car_FristRoute[MAX];   // 存储小车第一段路径
-uint8_t Recode_FristRoute = 0;   // 第一段路径
-uint8_t CarFristRouteNumber = 0; // 第一段路径数目
-// 第二段路径
+Direction_t car_dir;              // 小车方向
+car_state Car_FristRoute[MAX];    // 存储小车第一段路径
+uint8_t Recode_FristRoute = 0;    // 第一段路径
+uint8_t CarFristRouteNumber = 0;  // 第一段路径数目
 car_state Car_SecondRoute[MAX];   // 存储小车第二段路径
 uint8_t Recode_SecondRoute = 0;   // 第二段路径数目
 uint8_t CarSecondRouteNumber = 0; // 第二段路径数目
-
-uint8_t AGV_Forward; // 小车初始化方向
+uint8_t AGV_Forward;              // 小车初始化方向
 
 // 摄像头储存数据
 uint8_t QRcode_Array[10][100];  // 存储二维码数据
@@ -247,39 +145,85 @@ uint8_t QRcode_Length[10];      // 存储二维码长度
 uint8_t QR_Number = 0;          // 记录二维码识别下标
 uint8_t QRcode_OTABufData[100]; // 接收每次二维码信息
 
-// 判断需要识别的个数和真正识别到个数是否相同
-uint8_t SameNum_Flag = 0;
-// 判断需要颜色与返回的是否一样
-uint8_t SameColor_Flag = 0;
+// 内部数据
+uint8_t SameNum_Flag = 0;       // 判断需要识别的个数和真正识别到个数是否相同
+uint8_t SameColor_Flag = 0;     // 判断需要颜色与返回的是否一样
+uint8_t road_open_flag = 0;     // 道闸(开启标志位)
+uint8_t garageA_quit_move = 0;  // 驶出车库A
+uint8_t garageA_move_front = 0; // 驶入车库A
+uint8_t garageB_quit_move = 0;  // 驶出车库B
+uint8_t garageB_move_front = 0; // 驶入车库B
+uint8_t traffic_status = 0;     // K210交通灯颜色返回
+char flag_AB;                   // 交通灯AB标志位
+uint8_t encoder_distance = 0;   // 固定循迹值
+uint8_t Data_OpenMVBuf[8];
 
-// Zigbee接收数据
-uint8_t ZigBee_command[8]; // 读取Zigbee传输数据
-uint8_t ZigBee_judge;      // 判断校验位
+// 内部指令k210
+uint8_t qr_disc_buf[8] = {0x55, 0x02, 0x92, 0x01, 0x00, 0x00, 0x00, 0xBB};       // 给K210发送识别二维码
+uint8_t traffical_StartUp[8] = {0x55, 0x02, 0x91, 0x04, 0x00, 0x00, 0x00, 0xBB}; // 给K210发送识别二维码/交通灯
 
-// 道闸(开启标志位)
-uint8_t road_open_flag = 0;
+// 内部指令主车和标志物
+uint8_t Send_AGV[8] = {0X55, 0X01, 0X00, 0X00, 0X00, 0X00, 0X00, 0XBB};
+uint8_t road_buf[] = {0x55, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t led_data_buf[8] = {0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t led_time_buf[8] = {0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB}; // LED显示
+uint8_t led_distance_buf[8] = {0x55, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t stereogarage_buf[8] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};       // 立体车库（A/B）
+uint8_t stereosarage_quire_buf[8] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB}; // 立体车库（A/B）// 语音播报使用，请勿删除，此处现在
+uint8_t Number_Voice[] = {0xC1, 0xE3, 0xD2, 0xBB, 0xB6, 0xFE,
+                          0xC8, 0xFD, 0xCB, 0xC4, // 零一二三四五六七八九十
+                          0xCE, 0xE5, 0xC1, 0xF9, 0xC6, 0xDF,
+                          0xB0, 0xCB, 0xBE, 0xC5, 0xCA, 0xAE};
+uint8_t Weather_Code[][4] = {{0xB4, 0xF3, 0xB7, 0xE7}, {0xB6, 0xE0, 0xD4, 0xC6}, {0xC7, 0xE7, 0X01, 0X01}, // 大风 多云 晴
+                             {0xD0, 0xA1, 0xD1, 0xA9},
+                             {0xD0, 0xA1, 0xD3, 0xEA},
+                             {0xD2, 0xF5, 0xCC, 0xEC}}; // 小雪 小雨 阴天
+uint8_t voice_buf[8] = {0x55, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t voice_weather_buf[8] = {0x55, 0x06, 0x42, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t voice_check_buf[8] = {0x55, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t test_buf[] = {
+    0xFD, 0x00, 0x0C, 0x01, 0x01, 0xC0, 0xEE, 0xB3,
+    0xBF, 0xD1, 0xEE, 0xCE, 0xDE, 0xB5, 0xD0}; // 需要合成的文本更改
 
-// 车库
-uint8_t garageA_quit_move = 0;
-uint8_t garageA_move_front = 0;
-uint8_t garageB_quit_move = 0;
-uint8_t garageB_move_front = 0;
+uint8_t year_voice[] = {0xFD, 0x00, 0x14, 0x01, 0x01, 0xB5, 0xB1,
+                        0xC7, 0xB0, 0xCA, 0xB1, 0xBC, 0xE4, // 当前时间
+                        0xB6, 0xFE, 0xC1, 0xE3, 0xB6, 0xFE, 0xC8,
+                        0xFD, 0xC4, 0xEA}; // 二零二三年  17 18 19 20
+uint8_t date_voice[] = {
+    0xFD, 0x00, 0x10, 0x01, 0x01, 0xCA, 0xAE, 0xB6,
+    0xFE, 0xD4, 0xC2,                                // 十二月 5 6 7 8
+    0xC8, 0xFD, 0xCA, 0xAE, 0xD2, 0xBB, 0xC8, 0xD5}; // 三十一日11 12 13 14 15 16
+uint8_t time_voice[] = {
+    0xFD, 0x00, 0x1A, 0x01, 0x01, 0xB6, 0xFE, 0xCA, 0xAE,
+    0xCB, 0xC4, 0xCA, 0xB1,                          // 二十三时  5  6  7  8  9 10
+    0xC8, 0xFD, 0xCA, 0xAE, 0xC8, 0xFD, 0xB7, 0xD6,  // 三十三分  13 14 15 16 17 18
+    0xC8, 0xFD, 0xCA, 0xAE, 0xC1, 0xF9, 0xC3, 0xEB}; // 三十三秒  21 22 23 24 25 26
+uint8_t beacon_sendquire[8] = {0x55, 0x07, 0x09, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t beacon_bendcode_buf[8] = {0x55, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t tft_picture_buf[] = {0x55, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t tft_licenseplate_buf[] = {0x55, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t tft_time_buf[] = {0x55, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t tft_date_buf[] = {0x55, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t tft_distance_buf[] = {0x55, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0xbb};
+uint8_t tft_traffic_buf[8] = {0x55, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0xbb};
+uint8_t wireless_buf[8] = {0x55, 0x0a, 0x01, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t wireless_buf_5_2[8] = {0x55, 0x0A, 0X00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t etc_buf[8] = {0X55, 0x0C, 0x08, 0x00, 0x00, 0x00, 0X00, 0XBB};
+uint8_t traffic_buf[] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t traffic_result_buf[] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t special_terrain[] = {0x55, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t infare_rotationled_buf[6] = {0xFF, 0x00, 0x00, 0x00, 0x00, 0x00};
+uint8_t rotationled_zigbee_buf[8] = {0x55, 0x11, 0x31, 0x00, 0x00, 0x00, 0x00, 0xBB};
+uint8_t trm_buf[] = {0xAF, 0x06, 0x00, 0x02, 0x00, 0x00, 0x01, 0xBB};
 
-// 交通灯
-uint8_t traffic_status = 0; // K210交通灯颜色返回
-char flag_AB;               // 交通灯AB标志位
-
-// 注意！！！
-// DCMotor循迹函数已经改过了,自适应所有地图，但不能保证一定没问题
-// 所谓循迹路径区分白卡和十字路口为，先判断是否为一排循迹灯状态为(白黑白：直线)；其他为特殊地形或者白卡十字路口，具体看DCMotor.c
-
-/*********************自用变量  End**************************/
-
-/*-------------------------------------------------------------------*/
-
-/*-------------------------------初始化-------------------------------*/
-
-/*-------------------------------------------------------------------*/
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ arduino函数 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+/************************************************************************************************************
+ 【函 数】:setup
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:启动函数,初始化固件
+*************************************************************************************************************/
 void setup()
 {
   CoreLED.Initialization();          // 初始化核心板LED
@@ -296,17 +240,15 @@ void setup()
   Serial.begin(115200);              // 初始化串口
   while (!Serial)
     ; // 等待串口初始化完成
-
-  /*---AGV朝向初始化---*/
   car_dir = AGV_LEFT;
 }
-
-/*---------------------------------------------------------------*/
-
-/*-----------------------------主函数-----------------------------*/
-
-/*---------------------------------------------------------------*/
-
+/************************************************************************************************************
+ 【函 数】:loop
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:循环函数
+*************************************************************************************************************/
 void loop()
 {
   // 按键检测
@@ -331,7 +273,43 @@ void loop()
     move_flag = 0;
   }
 }
-/**********************************************Zigbee回传数据查询任务 * Start********************************************/
+/************************************************************************************************************
+ 【函 数】:KEY_Handler
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:按键定义
+*************************************************************************************************************/
+void KEY_Handler(uint8_t k_value)
+{
+  switch (k_value)
+  {
+  case 1:
+    move_flag = 1;
+    Serial.println("move");
+    break;
+  case 2:
+    Normal_Track(30);
+    break;
+  case 3:
+    DCMotor.Go(30, 300);
+    break;
+  case 4:
+    RotationLED_Traffic(1);
+    break;
+  default:
+    break;
+  }
+}
+
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 通讯函数 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+/************************************************************************************************************
+ 【函 数】:Zigbee_Recive
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:接收zigbee函数
+*************************************************************************************************************/
 void Zigbee_Recive(void)
 {
   // 从车接收ZigBee数据
@@ -361,86 +339,70 @@ void Zigbee_Recive(void)
     }
   }
 }
-
 /************************************************************************************************************
-【函 数 名】：	MainCar_Information 从车处理主车Zigbee指令 【参数说明】：
-无参数 【返 回 值】：	无返回 【简    例】：  MainCar_Information();
- ************************************************************************************************************/
-// 主车Zigbee信息处理，不建议改为Switch,之前改为Switch有些语句进不去
-// 主从自定义协议写在此处
+ 【函 数】:MainCar_Information
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:处理主车Zigbee指令 (与主车protocol.h中的AGV_CMD_t对应,按题意添加)
+*************************************************************************************************************/
 void MainCar_Information(void)
 {
-  if (ZigBee_command[2] == ReceiverMainCar_AlarmFrontCode) // 烽火台开启码前三位
+  switch (ZigBee_command[2])
   {
+  case ReceiverMainCar_AlarmFrontCode: // 烽火台开启码前三位
     Beacon_Alarm[0] = ZigBee_command[3];
     Beacon_Alarm[1] = ZigBee_command[4];
     Beacon_Alarm[2] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AlarmBackCode) // 烽火台开启码后三位
-  {
+    break;
+  case ReceiverMainCar_AlarmBackCode: // 烽火台开启码后三位
     Beacon_Alarm[3] = ZigBee_command[3];
     Beacon_Alarm[4] = ZigBee_command[4];
     Beacon_Alarm[5] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_YearMoneyDay) // RTC 年月日
-  {
+    break;
+  case ReceiverMainCar_YearMoneyDay: // RTC 年月日
     Rtc_Data[0] = ZigBee_command[3];
     Rtc_Data[1] = ZigBee_command[4];
     Rtc_Data[2] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_HourMinuteSecond) // RTC 时分秒
-  {
+    break;
+  case ReceiverMainCar_HourMinuteSecond: // RTC 时分秒
     Rtc_Data[3] = ZigBee_command[3];
     Rtc_Data[4] = ZigBee_command[4];
     Rtc_Data[5] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_WetherTemp) // 天气  温度
-  {
+    break;
+  case ReceiverMainCar_WetherTemp: // 天气  温度
     Weather_Temp[0] = ZigBee_command[3];
     Weather_Temp[1] = ZigBee_command[4];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_StereoDistance) // 其他东西参数
-  {
-    carfirstroute[0] = ZigBee_command[3];
-    carfirstroute[1] = ZigBee_command[4];
-    //  Distance_Display = ZigBee_command[3];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_Forward) // 小车初始化朝向
-  {
+    break;
+  case ReceiverMainCar_AGV_Forward: // 小车初始化朝向
     AGV_Forward = ZigBee_command[3];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_Quitwait) // 从车等待在起信号
-  {
-    quit_wait = 1; // 退出二段路径等待标志位
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_Movement) // 主车启动跑路径
-  {
+    break;
+  case ReceiverMainCar_AGV_Quitwait: // 从车等待在起信号
+    quit_wait = 1;
+    break;
+  case ReceiverMainCar_AGV_Movement: // 主车启动跑路径
     move_flag = 1;
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_RoadFrontCode) // 道闸车牌前三位
-  {
+    break;
+  case ReceiverMainCar_RoadFrontCode: // 道闸车牌前三位
     Road_Code[0] = ZigBee_command[3];
     Road_Code[1] = ZigBee_command[4];
     Road_Code[2] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_RoadBackCode) // 道闸车牌后三位
-  {
+    break;
+  case ReceiverMainCar_RoadBackCode: // 道闸车牌后三位
     Road_Code[3] = ZigBee_command[3];
     Road_Code[4] = ZigBee_command[4];
     Road_Code[5] = ZigBee_command[5];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_Route) // 第一段路径
-  {
+    break;
+  case ReceiverMainCar_AGV_Route: // 第一段路径
     if ((CarFristRouteNumber == 0 || Car_FristRoute[CarFristRouteNumber - 1].car_step != ZigBee_command[3]) && move_flag == 0)
     {
-      Car_FristRoute[CarFristRouteNumber].car_step = ZigBee_command[3]; //
+      Car_FristRoute[CarFristRouteNumber].car_step = ZigBee_command[3];
       Car_FristRoute[CarFristRouteNumber].car_x = ZigBee_command[4];
       Car_FristRoute[CarFristRouteNumber].car_y = ZigBee_command[5];
       CarFristRouteNumber++;
     }
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_NextRoute) // 第二段路径
-  {
+    break;
+  case ReceiverMainCar_AGV_NextRoute: // 第二段路径
     if ((CarSecondRouteNumber == 0 || Car_SecondRoute[CarSecondRouteNumber - 1].car_step != ZigBee_command[3]))
     {
       Car_SecondRoute[CarSecondRouteNumber].car_step = ZigBee_command[3]; //
@@ -448,25 +410,24 @@ void MainCar_Information(void)
       Car_SecondRoute[CarSecondRouteNumber].car_y = ZigBee_command[5];
       CarSecondRouteNumber++;
     }
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_TrafficSign)
-  {
+    break;
+  case ReceiverMainCar_AGV_TrafficSign: // 交通标志
     traffic_sign = ZigBee_command[3];
-  }
-  else if (ZigBee_command[2] == ReceiverMainCar_AGV_DataComplete)
-  {
+    break;
+  case ReceiverMainCar_AGV_DataComplete: // 数据传输完成
     data_complete = 1;
-  }
-  else if (ZigBee_command[2] == AGV_CMD_Data1)
-  {
+    break;
+  case AGV_CMD_Data1: // 预留数据
+    break;
   }
 }
-
 /************************************************************************************************************
- 【函 数 名】：	ZigBeeRx_Handler 从车ZigBee接收，处理函数 【参数说明】：
- *mac                                            接收数据指针 【返 回 值】：
- 无返回 【简    例】： ZigBeeRx_Handler(ZigBee_command);
- ************************************************************************************************************/
+ 【函 数】:ZigBeeRx_Handler
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:处理标志物Zigbee指令 (没写枚举 因为懒得改了)
+*************************************************************************************************************/
 void ZigBeeRx_Handler(uint8_t *mar)
 {
   switch (mar[1])
@@ -603,20 +564,17 @@ void ZigBeeRx_Handler(uint8_t *mar)
     break;
   case 0x14: // 交通灯标志物D
     break;
-  default:
-    break;
   }
 }
 
-/**********************************************Zigbee回传数据查询任务 * End********************************************/
-
-/***************************************任务转弯点调节角度***************************************/
-
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 转弯函数 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 /************************************************************************************************************
-【函 数 名】：	Turn_Conner 小车原地旋转 【参数说明】：
-leftspeed、rightspeed：速度为60,正负表示左转或右转 【返 回 值】：	无返回
-【简    例】：  Turn_Conner(90,-90,180); 小车右转180°
-***********************************************************************************************************/
+ 【函 数】:Turn_Conner_TypeDelay
+ 【参 数】:leftspeed 左轮速度  rightspeed 右轮速度  angle 旋转角度
+ 【返 回】:
+ 【简 例】:Turn_Conner_TypeDelay(90,-90,180); 小车右转180°
+ 【说 明】:通过延迟来转弯(需要更改TurnAngle的值,TurnAngle转1°需要的时间)
+*************************************************************************************************************/
 void Turn_Conner_TypeDelay(int16_t leftspeed, int16_t rightspeed, uint16_t angle)
 {
   delay(200);
@@ -624,90 +582,204 @@ void Turn_Conner_TypeDelay(int16_t leftspeed, int16_t rightspeed, uint16_t angle
   delay((int)(TurnAngle * angle));
   DCMotor.Stop();
 }
-
 /************************************************************************************************************
-【函 数 名】：	TurnConner_Code_TypeCode 小车原地旋转 【参数说明】：
-leftspeed、rightspeed：速度为60,正负表示左转或右转 【返 回 值】：	无返回
-【简    例】：  TurnConner_Code_TypeCode(90,-90,180); 小车右转180°
-***********************************************************************************************************/
-void Turn_Conner_TypeCode(int16_t leftspeed, int16_t rightspeed, uint16_t angle)
+ 【函 数】:TurnRight
+ 【参 数】:speed 车轮速度
+ 【返 回】:
+ 【简 例】:TurnRight(90,0);
+ 【说 明】:通过码盘来右转90°
+*************************************************************************************************************/
+void TurnRight(uint8_t speed)
 {
-  delay(200);
-  DCMotor.SpeedCtr(leftspeed, rightspeed);
-  delay((int)(Turn_Code / 90 * angle));
-  DCMotor.Stop();
+  Clear_Code();
+  DCMotor.TurnRight_Code(speed, Turn_Code);
+  delay(500);
+}
+/************************************************************************************************************
+ 【函 数】:TurnLeft
+ 【参 数】:speed 车轮速度
+ 【返 回】:
+ 【简 例】:TurnRight(90,0);
+ 【说 明】:通过码盘来左转90°
+*************************************************************************************************************/
+void TurnLeft(uint8_t speed)
+{
+  Clear_Code();
+  DCMotor.TurnLeft_Code(speed, Turn_Code);
+  delay(500);
+}
+/************************************************************************************************************
+ 【函 数】:TurnRight
+ 【参 数】:speed 车轮速度
+ 【返 回】:
+ 【简 例】:TurnBack(90);
+ 【说 明】:通过码盘来转180°
+*************************************************************************************************************/
+void TurnBack(uint8_t speed)
+{
+  Clear_Code();
+  TurnLeft(speed);
+  TurnLeft(speed);
+}
+/************************************************************************************************************
+ 【函 数】:Auto_Forward
+ 【参 数】:x轴 y轴
+ 【返 回】:
+ 【简 例】:x=0,y=1  转到上方
+ 【说 明】:通过xy轴转向
+*************************************************************************************************************/
+void Auto_Forward(int x, int y)
+{
+  uint8_t car_direction_front;
+
+  if (x == 0)
+  {
+    if (y > 0)
+      car_direction_front = 1; // 朝上
+    else
+      car_direction_front = 3; // 朝下
+  }
+  else
+  {
+    if (x > 0)
+      car_direction_front = 4; // 朝右
+    else
+      car_direction_front = 2; // 朝左
+  }
+  switch (car_dir) // 上左下右
+  {
+  case 1:
+    switch (car_direction_front) // 上
+    {
+    case 1:
+      car_dir = AGV_UP;
+      break; // 上
+    case 2:
+      TurnLeft(TurnCarSpeed);
+      car_dir = AGV_LEFT;
+      break; // 左
+    case 3:
+      TurnBack(TurnCarSpeed);
+      car_dir = AGV_DOWN;
+      break; // 下
+    case 4:
+      TurnRight(TurnCarSpeed);
+      car_dir = AGV_RIGHT;
+      break; // 右
+    default:
+      break;
+    }
+    break;
+  case 2:
+    switch (car_direction_front) // 左
+    {
+    case 1:
+      TurnRight(TurnCarSpeed);
+      car_dir = AGV_UP;
+      break; // 上
+    case 2:
+      car_dir = AGV_LEFT;
+      break; // 左
+    case 3:
+      TurnLeft(TurnCarSpeed);
+      car_dir = AGV_DOWN;
+      break; // 下
+    case 4:
+      TurnBack(TurnCarSpeed);
+      car_dir = AGV_RIGHT;
+      break; // 右
+    default:
+      break;
+    }
+    break;
+  case 3:
+    switch (car_direction_front) // 下
+    {
+    case 1:
+      TurnBack(TurnCarSpeed);
+      car_dir = AGV_UP;
+      break; // 上
+    case 2:
+      TurnRight(TurnCarSpeed);
+      car_dir = AGV_LEFT;
+      break; // 左
+    case 3:
+      car_dir = AGV_DOWN;
+      break; // 下
+    case 4:
+      TurnLeft(TurnCarSpeed);
+      car_dir = AGV_RIGHT;
+      break; // 右
+    default:
+      break;
+    }
+    break;
+  case 4:
+    switch (car_direction_front) // 右
+    {
+    case 1:
+      TurnLeft(TurnCarSpeed);
+      car_dir = AGV_UP;
+      break; // 上
+    case 2:
+      TurnBack(TurnCarSpeed);
+      car_dir = AGV_LEFT;
+      break; // 左
+    case 3:
+      TurnRight(TurnCarSpeed);
+      car_dir = AGV_DOWN;
+      break; // 下
+    case 4:
+      car_dir = AGV_RIGHT;
+      break; // 右
+    default:
+      break;
+    }
+    break;
+  default:
+    break;
+  }
 }
 
-/*******************************************自动跑路径***************************************/
-// 循迹直行
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 循迹函数 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
+/************************************************************************************************************
+ 【函 数】:CarTrack
+ 【参 数】:speed 车轮速度   mode 循迹模式(0红外/1视觉)
+ 【返 回】:
+ 【简 例】:CarTrack(30,0);
+ 【说 明】:循迹主函数
+*************************************************************************************************************/
 void CarTrack(uint8_t speed, uint8_t mode)
 {
-  uint16_t code_value = 0; // 码盘值确定
-
-  Clear_Code();  // 清除循迹
-  if (mode == 0) // 红外循迹
-  {
-    Normal_Track(speed);      // 红外循迹
-    code_value = Read_Code(); // 读取码盘值
-    if (code_value > 2300)    // 如果满盘值大于2300,表示特殊地形在十字路口中间，所以路径+1
-    {
-      Recode_FristRoute += 1;
-    }
-    DCMotor.Go(speed, 280); // 十字路口前前进码盘值
-  }
-  else // 视觉循迹
+  Clear_Code();
+  if (mode)
   {
     OpenMV_Track(speed, 0, 0); // 视觉循迹
     delay(500);
-    DCMotor.GoSelfDefine(47, 54, 420); // 十字路口前前进码盘值，前面两个参数为左轮速度和右路速度
+    DCMotor.GoSelfDefine(47, 54, 420);
+  }
+  else
+  {
+    Normal_Track(speed); // 红外循迹
+    delay(500);
+    DCMotor.Go(speed, 380);
   }
   delay(500);
 }
-
-// 右转加延迟
-void TurnRight(uint8_t speed, uint8_t mode) // 右转
+/************************************************************************************************************
+ 【函 数】:Normal_Track
+ 【参 数】:speed 车轮速度
+ 【返 回】:
+ 【简 例】:CarTrack(30);
+ 【说 明】:红外循迹主函数
+*************************************************************************************************************/
+void Normal_Track(uint8_t speed)
 {
-  Clear_Code();
-  if (mode == 0)
-    DCMotor.TurnRight(speed); // 红外循迹右转
-  else
-    DCMotor.TurnRight_Code(speed, Turn_Code); // 视觉码盘右转
-  delay(500);
-}
-
-// 左转延迟
-void TurnLeft(uint8_t speed, uint8_t mode) // 左转
-{
-  Clear_Code();
-  if (mode == 0)
-    DCMotor.TurnLeft(speed); // 红外循迹左转
-  else
-    DCMotor.TurnLeft_Code(speed, Turn_Code); // 视觉循迹左转
-  delay(500);
-}
-
-// 回转延迟
-void TurnBack(uint8_t speed, uint8_t mode) // 回转
-{
-  Clear_Code();
-  TurnLeft(speed, mode);
-  TurnLeft(speed, mode);
-}
-
-typedef enum
-{
-  Track_NORMAL = 0,  // 正常循迹到黑线停止
-  Track_ENCODER = 1, // 固定码盘循迹
-} Track_t;
-
-Track_t Track_Mode = Track_NORMAL;
-uint8_t encode_value = 0; // 码盘循迹值
-bool enter_white = false;
-
-void Normal_Track(uint8_t Car_Spend)
-{
+  bool enter_white = false;
   uint8_t H8_N, Q7_N;
   uint8_t Q7[7], H8[8], ALL_TRACK[15];
+  int16_t encode = Read_Code();
+
   while (true)
   {
     Q7_N = ExtSRAMInterface.ExMem_Read(TRACK_ADDR + 1);
@@ -722,6 +794,14 @@ void Normal_Track(uint8_t Car_Spend)
     }
     H8[7] = (H8_N >> 7) & 1;
     ALL_TRACK[14] = H8[7];
+
+    switch (Track_Mode)
+    {
+    case Track_ENCODER:
+      if ((Read_Code() - encode) >= encoder_distance)
+        return;
+      break;
+    }
 
     if ((H8[0] + Q7[0] + H8[7] + Q7[6]) < 2)
     { // 到十字路口
@@ -745,7 +825,7 @@ void Normal_Track(uint8_t Car_Spend)
       else
       { // 白卡
         Pid.Calculate_pid(getOffset(ALL_TRACK));
-        DCMotor.SpeedCtr(Car_Spend + Pid.PID_value - 10, Car_Spend - Pid.PID_value - 10);
+        DCMotor.SpeedCtr(speed + Pid.PID_value - 10, speed - Pid.PID_value - 10);
       }
     }
     else if (enter_white && !Q7[3] && Q7[2] && Q7[4])
@@ -756,11 +836,62 @@ void Normal_Track(uint8_t Car_Spend)
     else
     { // 正常循迹
       Pid.Calculate_pid(getOffset(ALL_TRACK));
-      DCMotor.SpeedCtr(Car_Spend + Pid.PID_value, Car_Spend - Pid.PID_value);
+      DCMotor.SpeedCtr(speed + Pid.PID_value, speed - Pid.PID_value);
     }
   }
 }
+/************************************************************************************************************
+ 【函 数】:Normal_Track_Encoder
+ 【参 数】:speed 车轮速度   distance 距离
+ 【返 回】:
+ 【简 例】:Normal_Track_Encoder(30, 80);
+ 【说 明】:红外码盘循迹
+*************************************************************************************************************/
+void Normal_Track_Encoder(uint8_t speed, uint8_t distance)
+{
+  encoder_distance = distance * Speed50_Delay;
+  Normal_Track(speed);
+}
+/************************************************************************************************************
+ 【函 数】:Clear_Code
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:清除码盘值
+*************************************************************************************************************/
+void Clear_Code(void)
+{
+  uint8_t code_zigbee[8] = {0x55, 0x02, 0x07, 0x00, 0x00, 0x00, 0x00, 0xbb};
+  Command.Judgment(code_zigbee); // 计算校验和
+  ExtSRAMInterface.ExMem_Write_Bytes(0x6008, code_zigbee, 8);
+}
+/************************************************************************************************************
+ 【函 数】:Read_Code
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:读取十五位码盘值
+*************************************************************************************************************/
+int16_t Read_Code(void)
+{
+  int16_t Code_Wheel = 0;
 
+  Code_Wheel = ExtSRAMInterface.ExMem_Read(0x6002);                     // 读取码盘低八位
+  Code_Wheel = Code_Wheel + (ExtSRAMInterface.ExMem_Read(0x6003) << 8); // 读取码盘高八位
+
+  return Code_Wheel;
+}
+/************************************************************************************************************
+ 【函 数】:getOffset
+ 【参 数】:arr 循迹灯数组
+ 【返 回】:有循迹灯得到的误差值 用于pid计算
+ 【简 例】:getOffset([1,1,1,1,1,1,1,0,1,1,1,1,1,1,1]);  返回 0
+ 【说 明】:循迹灯算法
+  1.循迹灯状态             2.将两个数组按以下顺序打为一个数组   3.得到数组并通过算法得值
+  Q7 [1,1,1,0,1,1,1]       [2,4,6,8,10,12,14]            [1,1,1,1,1,1,1,0,1,1,1,1,1,1,1] -> 0
+  H8[1,1,1,1,1,1,1,1]     [1,3,5,7,9,11,13,15]           [1,1,1,1,1,1,1,0,0,1,1,1,1,1,1] -> 0.5
+  简单的说就是通过循迹灯的15位值得到一个值 比如往左偏就是-10 右偏就是+10 正中间就是0  用这个值带入pid去算
+*************************************************************************************************************/
 float getOffset(uint8_t arr[])
 {
   int8_t all_weights[15] = {0};
@@ -796,218 +927,63 @@ float getOffset(uint8_t arr[])
 
   return errorValue;
 }
-// 红外循迹
-void TCRT5000_Crack(uint8_t Car_Speed, uint32_t distance)
+/************************************************************************************************************
+ 【函 数】:Count_BlackNumber
+ 【参 数】:track_value 循迹值   length  灯数量
+ 【返 回】:灯灭的数量
+ 【简 例】:Count_BlackNumber(119, 7); 转二进制得1110111 返回1
+ 【说 明】:记录循迹灯灭的个数
+*************************************************************************************************************/
+uint8_t Count_BlackNumber(uint8_t track_value, uint8_t length)
 {
-  uint8_t tp, gd;
-  uint32_t timeadjust = 0;
-  uint8_t firstbit[8];
+  uint8_t res = 0; // 记录循迹灯灭的个数
 
-  timeadjust = millis();
-  while (1)
+  for (uint8_t i = 0; i < length; i++)
   {
-    tp = 0;
-    firstbit[0] = 0;
-    gd = ExtSRAMInterface.ExMem_Read(0x6000);
-    for (size_t i = 0x01; i < 0x100; i <<= 1)
-    {
-      if ((gd & i) == 0)
-      {
-        firstbit[tp++] = uint8_t(i);
-      }
-    }
-    switch (firstbit[0])
-    {
-    case 0x00:
-      DCMotor.SpeedCtr(Car_Speed, Car_Speed);
-      break;
-    case 0x01:
-      DCMotor.SpeedCtr(Car_Speed + 60, Car_Speed - 120);
-      break;
-    case 0x02:
-      DCMotor.SpeedCtr(Car_Speed + 60, Car_Speed - 120);
-      break;
-    case 0x04:
-      DCMotor.SpeedCtr(Car_Speed + 40, Car_Speed - 70);
-      break;
-    case 0x08:
-      DCMotor.SpeedCtr(Car_Speed + 30, Car_Speed - 30);
-      break;
-    case 0x10:
-      DCMotor.SpeedCtr(Car_Speed - 4, Car_Speed + 4);
-      break;
-    case 0x20:
-      DCMotor.SpeedCtr(Car_Speed - 30, Car_Speed + 30);
-      break;
-    case 0x40:
-      DCMotor.SpeedCtr(Car_Speed - 70, Car_Speed + 40);
-      break;
-    case 0x80:
-      DCMotor.SpeedCtr(Car_Speed - 120, Car_Speed + 60);
-      break;
-    }
-    if ((millis() - timeadjust) >= (distance * 36))
-    {
-      DCMotor.Stop();
-      break;
-    }
+    if (track_value % 2 == 0)
+      res += 1;
+    track_value >>= 1;
   }
+
+  return res;
 }
 
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 倒车函数 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 /************************************************************************************************************
-【函 数 名】：	Auto_Forward	                              小车自动识别路径
-【参数说明】：	无参数
-【返 回 值】：	无返回
-【简    例】：  Auto_Forward();
-************************************************************************************************************/
-void Auto_Forward(int x, int y, uint8_t mode)
-{
-  uint8_t car_direction_front;
-
-  if (x == 0)
-  {
-    if (y > 0)
-      car_direction_front = 1; // 朝上
-    else
-      car_direction_front = 3; // 朝下
-  }
-  else
-  {
-    if (x > 0)
-      car_direction_front = 4; // 朝右
-    else
-      car_direction_front = 2; // 朝左
-  }
-  switch (car_dir) // 上左下右
-  {
-  case 1:
-    switch (car_direction_front) // 上
-    {
-    case 1:
-      car_dir = AGV_UP;
-      break; // 上
-    case 2:
-      TurnLeft(TurnCarSpeed, mode);
-      car_dir = AGV_LEFT;
-      break; // 左
-    case 3:
-      TurnBack(TurnCarSpeed, mode);
-      car_dir = AGV_DOWN;
-      break; // 下
-    case 4:
-      TurnRight(TurnCarSpeed, mode);
-      car_dir = AGV_RIGHT;
-      break; // 右
-    default:
-      break;
-    }
-    break;
-  case 2:
-    switch (car_direction_front) // 左
-    {
-    case 1:
-      TurnRight(TurnCarSpeed, mode);
-      car_dir = AGV_UP;
-      break; // 上
-    case 2:
-      car_dir = AGV_LEFT;
-      break; // 左
-    case 3:
-      TurnLeft(TurnCarSpeed, mode);
-      car_dir = AGV_DOWN;
-      break; // 下
-    case 4:
-      TurnBack(TurnCarSpeed, mode);
-      car_dir = AGV_RIGHT;
-      break; // 右
-    default:
-      break;
-    }
-    break;
-  case 3:
-    switch (car_direction_front) // 下
-    {
-    case 1:
-      TurnBack(TurnCarSpeed, mode);
-      car_dir = AGV_UP;
-      break; // 上
-    case 2:
-      TurnRight(TurnCarSpeed, mode);
-      car_dir = AGV_LEFT;
-      break; // 左
-    case 3:
-      car_dir = AGV_DOWN;
-      break; // 下
-    case 4:
-      TurnLeft(TurnCarSpeed, mode);
-      car_dir = AGV_RIGHT;
-      break; // 右
-    default:
-      break;
-    }
-    break;
-  case 4:
-    switch (car_direction_front) // 右
-    {
-    case 1:
-      TurnLeft(TurnCarSpeed, mode);
-      car_dir = AGV_UP;
-      break; // 上
-    case 2:
-      TurnBack(TurnCarSpeed, mode);
-      car_dir = AGV_LEFT;
-      break; // 左
-    case 3:
-      TurnRight(TurnCarSpeed, mode);
-      car_dir = AGV_DOWN;
-      break; // 下
-    case 4:
-      car_dir = AGV_RIGHT;
-      break; // 右
-    default:
-      break;
-    }
-    break;
-  default:
-    break;
-  }
-}
-
-/**********************************************十字路口倒车入库***************************************/
-
-/************************************************************************************************************
-【函 数 名】：	adjust_car	                          小车循迹矫正车身
-【参数说明】：	m   1:调整一次，先后退在循迹            2:调整俩次，先循迹在后退
-【返 回 值】：	无返回
-【简    例】：  adjust_car(2);                        调整车身两次
-************************************************************************************************************/
+ 【函 数】:adjust_car
+ 【参 数】:count 调整次数   distance 距离   mode 循迹模式
+ 【返 回】:
+ 【简 例】:adjust_car(2, 30, 2);
+ 【说 明】:倒车调整
+*************************************************************************************************************/
 void adjust_car(uint8_t count, uint8_t distance, uint8_t mode)
 {
   for (int i = 0; i < count; i++)
   {
-    if (mode == 0)
-      TCRT5000_Crack(50, distance);
-    else
-      OpenMV_Track_Distance(50, distance);
-    delay(1000);
-    // DCMotor.Back(50, distance * 23);
-    if (mode == 1)
-      DCMotor.BackSelfDefine(47, 54, distance * 23);
-    else
+    if (!mode)
+    {
+      Normal_Track_Encoder(50, distance);
+      delay(1000);
       DCMotor.BackSelfDefine(47, 54, distance * 31);
-    delay(1000);
+      delay(1000);
+    }
+    else
+    {
+      OpenMV_Track_Distance(50, distance);
+      delay(1000);
+      DCMotor.BackSelfDefine(47, 54, distance * 23);
+      delay(1000);
+    }
   }
 }
-
 /************************************************************************************************************
-【函 数 名】：	AdjustCar_Back_Parking	                      倒车与入库
-【参数说明】：	flag：'A'和'B'车库                             Layer：上升层数
-               adjust_count：调整车身次数                     distance:
-【返 回 值】：	res:  0:表示存在
-【简    例】：  AdjustCar_Back_Parking('A',3,1,20);
-************************************************************************************************************/
-void AdjustCar_Back_Parking(char *flag, uint8_t Layer, uint8_t adjust_count,
-                            uint8_t distance, uint8_t mode)
+ 【函 数】:AdjustCar_Back_Parking
+ 【参 数】:flag 车库标识  Layer 上升层数  count 调整次数   distance 距离   mode 循迹模式
+ 【返 回】:
+ 【简 例】:AdjustCar_Back_Parking('A', 2, 2, 30, 2);
+ 【说 明】:倒车入口
+*************************************************************************************************************/
+void AdjustCar_Back_Parking(char *flag, uint8_t Layer, uint8_t adjust_count, uint8_t distance, uint8_t mode)
 {
   delay(500);
   StereoGarage_WaitingToFloor(flag);
@@ -1019,10 +995,12 @@ void AdjustCar_Back_Parking(char *flag, uint8_t Layer, uint8_t adjust_count,
   delay(500);
 }
 /************************************************************************************************************
-【函 数 名】：	Car_Reverse_Paring 十字路口自动倒车入库 【参数说明】：	无参数
-【返 回 值】：	无返回
-【简    例】：  Car_Reverse_Paring(void)              倒车入库
-************************************************************************************************************/
+ 【函 数】:Car_Reverse_Paring
+ 【参 数】:count 调整次数   distance 距离   mode 循迹模式
+ 【返 回】:
+ 【简 例】:Car_Reverse_Paring(2, 30, 2);
+ 【说 明】:倒车入库
+*************************************************************************************************************/
 void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
 {
   signed char x, y, backhome;
@@ -1054,15 +1032,15 @@ void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
     switch (backhome)
     {
     case 1:
-      TurnBack(90, mode);
+      TurnBack(90);
       break; // 上  ->  上
     case 2:
-      TurnRight(90, mode);
+      TurnRight(90);
       break; // 上  ->  左
     case 3:
       break; // 上  ->  下
     case 4:
-      TurnLeft(90, mode);
+      TurnLeft(90);
       break; // 上  ->  右
     default:
       break;
@@ -1072,13 +1050,13 @@ void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
     switch (backhome)
     {
     case 1:
-      TurnLeft(90, mode);
+      TurnLeft(90);
       break; // 左  ->  上
     case 2:
-      TurnBack(90, mode);
+      TurnBack(90);
       break; // 左  ->  左
     case 3:
-      TurnRight(90, mode);
+      TurnRight(90);
       break; // 左  ->  下
     case 4:
       break; // 左  ->  右
@@ -1092,13 +1070,13 @@ void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
     case 1:
       break; // 下  ->  上
     case 2:
-      TurnLeft(90, mode);
+      TurnLeft(90);
       break; // 下  ->  左
     case 3:
-      TurnBack(90, mode);
+      TurnBack(90);
       break; // 下  ->  下
     case 4:
-      TurnRight(90, mode);
+      TurnRight(90);
       break; // 下  ->  右
     default:
       break;
@@ -1108,15 +1086,15 @@ void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
     switch (backhome) // 右
     {
     case 1:
-      TurnRight(90, mode);
+      TurnRight(90);
       break; // 右  ->  上
     case 2:
       break; // 右  ->  左
     case 3:
-      TurnLeft(90, mode);
+      TurnLeft(90);
       break; // 右  ->  下
     case 4:
-      TurnBack(90, mode);
+      TurnBack(90);
       break; // 右  ->  右
     default:
       break;
@@ -1131,13 +1109,14 @@ void Car_Reverse_Paring(uint8_t count, uint8_t distance, uint8_t mode)
   DCMotor.BackSelfDefine(40, 40, 800);
 }
 
-/**********************************************任务板模块功能 * Start*****************************************************************/
-
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ 任务板任务 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 /************************************************************************************************************
-【函 数 名】：	Ultrasonic_Ranging 超声波测距 【参数说明】：	无参数 【返 回
-值】：	无参数 【简    例】：  Ultrasonic_Ranging(); 测量数据赋值数组
-Ultrasonic_Distance[3]中
- ************************************************************************************************************/
+ 【函 数】:Ultrasonic_Ranging
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:超声波测距 测量数据赋值数组Ultrasonic_Distance[3]中
+*************************************************************************************************************/
 void Ultrasonic_Ranging(void)
 {
   double read_date = 0, sum_date = 0; // 超声波距离
@@ -1171,85 +1150,14 @@ void Ultrasonic_Ranging(void)
   Ultrasonic_Distance[2] = (int)read_date % 10;         // 个
 }
 
+// * ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓ K210 ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
 /************************************************************************************************************
-【函 数 名】：	Read_BackTrack 返回前八位循迹值 【参数说明】：	无参数 【返 回
-值】：	返回前八位循迹值 【简    例】：  Read_BackTrack();
-Track=Read_BackTrack();返回当前码盘值并赋值给code
- ************************************************************************************************************/
-uint8_t Read_BackTrack(void)
-{
-  uint8_t Track_Value = 0;
-  Track_Value = ExtSRAMInterface.ExMem_Read(0x6000); // 读取后八位循迹值
-  return Track_Value;
-}
-
-/************************************************************************************************************
-【函 数 名】：	Read_BackTrack 返回前八位循迹值 【参数说明】：	无参数 【返 回
-值】：	返回前八位循迹值 【简    例】：  Read_BackTrack();
-Track=Read_BackTrack();返回当前码盘值并赋值给code
- ************************************************************************************************************/
-uint8_t Count_BlackNumber(uint8_t track_value, uint8_t length)
-{
-  uint8_t res = 0; // 记录循迹灯灭的个数
-
-  for (uint8_t i = 0; i < length; i++)
-  {
-    if (track_value % 2 == 0)
-      res += 1;
-    track_value >>= 1;
-  }
-
-  return res;
-}
-
-/************************************************************************************************************
-【函 数 名】：	Read_FrontTrack 读取前七位循迹值 【参数说明】：	无参数 【返 回
-值】：	返回前八位循迹值 【简    例】：  Read_FrontTrack();
-Track=Read_FrontTrack();返回当前码盘值并赋值给code
- ************************************************************************************************************/
-uint8_t Read_FrontTrack(void)
-{
-  uint8_t Track_Value = 0;
-  Track_Value = ExtSRAMInterface.ExMem_Read(0x6001); // 读取前七位循迹值
-  return Track_Value;
-}
-
-/************************************************************************************************************
-【函 数 名】：	Clear_Code 清除码盘值 【参数说明】：	无参数 【返 回 值】：
-无参数 【简    例】：  Clear_Code();
- ************************************************************************************************************/
-uint8_t code_zigbee[8] = {0x55, 0x02, 0x07, 0x00, 0x00, 0x00, 0x00, 0xbb};
-
-void Clear_Code(void)
-{
-  Command.Judgment(code_zigbee); // 计算校验和
-  ExtSRAMInterface.ExMem_Write_Bytes(0x6008, code_zigbee, 8);
-}
-
-/************************************************************************************************************
-【函 数 名】：	Read_Code 读取十六位码盘值 【参数说明】：	无参数 【返 回
-值】：	返回当前码盘值 【简    例】：  Read_Code();
-code=Read_Code()；返回当前马盘值并赋值给code
- ************************************************************************************************************/
-int16_t Read_Code(void)
-{
-  int16_t Code_Wheel = 0;
-
-  Code_Wheel = ExtSRAMInterface.ExMem_Read(0x6002);                     // 读取码盘低八位
-  Code_Wheel = Code_Wheel + (ExtSRAMInterface.ExMem_Read(0x6003) << 8); // 读取码盘高八位
-
-  return Code_Wheel;
-}
-
-/**********************************************任务板模块功能 * End*****************************************************************/
-
-/**********************************************  K210交互 * Start*****************************************************************/
-
-uint8_t qr_disc_buf[8] = {0x55, 0x02, 0x92, 0x01, 0x00, 0x00, 0x00, 0xBB}; // 给K210发送识别二维码
-/************************************************************************************************************
- 【函 数 名】：	K210_QR_ScanOne 二维码扫描模式一 【参数说明】：	无参数 【返 回
- 值】：	无返回 【简    例】： K210_QR_ScanOne()； 10s中无差别扫描
- ************************************************************************************************************/
+ 【函 数】:K210_QR_ScanOne
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送扫描单个二维码指令
+*************************************************************************************************************/
 void K210_QR_ScanOne(void)
 {
   qr_disc_buf[4] = 0x01; // 开始识别
@@ -1258,11 +1166,12 @@ void K210_QR_ScanOne(void)
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, qr_disc_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_QR_ScanTwo 个数扫描(回传方式为从左到右,从上往下)
- 【参数说明】：	qr_numbber:二维码个数 即从左上角二维码回传，然后为右上角二维码
- 【返 回 值】：	无返回
- 【简    例】： K210_QR_ScanTwo()； 个数扫描
- ************************************************************************************************************/
+ 【函 数】:K210_QR_ScanTwo
+ 【参 数】:qr_numbber 二维码数量
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送扫码规定个数的二维码指令(回传方式为从左到右,从上往下)
+*************************************************************************************************************/
 void K210_QR_ScanTwo(uint8_t qr_numbber)
 {
   qr_disc_buf[4] = 0x02; // 开始识别
@@ -1271,12 +1180,12 @@ void K210_QR_ScanTwo(uint8_t qr_numbber)
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, qr_disc_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_QR_ScanThree 扫描指定颜色二维码
- 【参数说明】：	0x01:红色    0x02:绿色    0x03:蓝色    0x04:黄色
-               0x05:品色    0x06:青色    0x07:黑色    0x08:白色
- 【返 回 值】：	无返回
- 【简    例】： K210_QR_ScanThree()； 扫描指定颜色二维码
- ************************************************************************************************************/
+ 【函 数】:K210_QR_ScanThree
+ 【参 数】:color 二维码颜色 0black 1blue 2green 3red 4yellow 5遮挡
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送扫码规定颜色的二维码指令
+*************************************************************************************************************/
 void K210_QR_ScanThree(uint8_t color)
 {
   qr_disc_buf[4] = 0x03; // 开始识别
@@ -1285,9 +1194,12 @@ void K210_QR_ScanThree(uint8_t color)
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, qr_disc_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_QR_Close 关闭二维码识别 【参数说明】：	无参数 【返 回
- 值】：	无返回 【简    例】： K210_QR_Close(1)； 关闭二维码识别
- ************************************************************************************************************/
+ 【函 数】:K210_QR_Close
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送结束识别指令
+*************************************************************************************************************/
 void K210_QR_Close(void)
 {
   uint8_t qr_close_buf[8] = {0x55, 0x02, 0x92, 0x02, 0x00, 0x00, 0x00, 0xBB}; // 给K210发送识别二维码
@@ -1295,29 +1207,30 @@ void K210_QR_Close(void)
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, qr_close_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_TrackControl 摄像头循迹 【参数说明】：	cmd: 0x01:启动
- 0x02：关闭 【返 回 值】：	无返回 【简    例】： K210_TrackControl(1)；
- 开启摄像头循迹
- ************************************************************************************************************/
+ 【函 数】:K210_TrackControl
+ 【参 数】:cmd 循迹开关(1启动/2关闭)
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送循迹指令
+*************************************************************************************************************/
 void K210_TrackControl(uint8_t cmd)
 {
   uint8_t track_buf[8] = {0x55, 0x02, 0x91, 0x01, 0x00, 0x00, 0x00, 0xBB};
   if (cmd == 0x01)
-  {
     Serial.println("循迹开始");
-  }
   else
-  {
     Serial.println("循迹关闭");
-  }
   track_buf[3] = cmd;
   Command.Judgment(track_buf); // 计算校验和
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, track_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_Check_Space 特殊地形识别 【参数说明】： 参数：无 【返 回
- 值】：	无返回 【简    例】： K210_Check_Space()； 启动特殊地形识别
- ************************************************************************************************************/
+ 【函 数】:K210_Check_Space
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送特殊地形识别指令
+*************************************************************************************************************/
 void K210_Check_Space()
 {
   uint8_t sapcefind_buf[8] = {0x55, 0x02, 0x91, 0x05, 0x00, 0x00, 0x00, 0xBB};
@@ -1325,9 +1238,12 @@ void K210_Check_Space()
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, sapcefind_buf, 8);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_Scan_ModeOne K210二维码识别 【参数说明】：	无参数 【返 回
- 值】：	无返回 【简    例】： K210_Scan_ModeOne()； 识别二维码
- ************************************************************************************************************/
+ 【函 数】:K210_Scan_ModeOne
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:识别单个二维码并处理
+*************************************************************************************************************/
 void K210_Scan_ModeOne(void)
 {
   uint8_t location = 0, count = 0; // location:二维码数组下标 count:左右摆动
@@ -1433,13 +1349,12 @@ void K210_Scan_ModeOne(void)
   delay(200);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_Scan_ModeTwo 二维码扫描模式二 【参数说明】：
- need_scanf_number 需要扫码二维码的个数 2:先左后右 3：先上，然后左下，右下
-               4:左上，左下，右上，右下 其他:不按顺序来
-               若是扫到的张数与需要扫到的张数不一致,则不按顺序接收(控制扫描二维码和车的距离很关键)
- 【返 回 值】：	无返回
- 【简    例】： K210_Scan_ModeTwo()； 识别二维码
- ************************************************************************************************************/
+ 【函 数】:K210_Scan_ModeTwo
+ 【参 数】:need_scanf_number 需要扫码二维码的个数 2:先左后右/3:先上，然后左下，右下/4:左上，左下，右上，右下/其他:不按顺序来
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:识别规定数量二维码并处理
+*************************************************************************************************************/
 void K210_Scan_ModeTwo(uint8_t need_scanf_number)
 {
   uint8_t Clear_Date[21] = {0}; // 用于清除缓存区
@@ -1543,11 +1458,12 @@ void K210_Scan_ModeTwo(uint8_t need_scanf_number)
   }
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_Scan_ModeTree 二维码扫描模式三
- 【参数说明】：color  0black 1blue 2green 3red 4yellow 5遮挡
- 【返 回 值】：	无返回
- 【简    例】： K210_Scan_ModeThree();
- ************************************************************************************************************/
+ 【函 数】:K210_Scan_ModeThree
+ 【参 数】:color 规定颜色 0black 1blue 2green 3red 4yellow 5遮挡
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:识别规定颜色二维码并处理
+*************************************************************************************************************/
 void K210_Scan_ModeThree(uint8_t color)
 {
   uint8_t Clear_Date[21] = {0}; // 用于清除缓存区
@@ -1636,10 +1552,12 @@ void K210_Scan_ModeThree(uint8_t color)
   }
 }
 /************************************************************************************************************
-【函 数 名】：	K210_Servo_Control 舵机角度控制函数 【参数说明】：	angle:
-舵机角度，范围-80至+20，0度垂直于车身 注意：官方说为-80~+40， 但是最高取20 【返
-回 值】：	无返回值 【简    例】：  K210_Servo_Control(20);
- ************************************************************************************************************/
+ 【函 数】:K210_Servo_Control
+ 【参 数】:angle 舵机角度 范围-80至+20，0度垂直于车身 注意：官方说为-80~+40， 但是最高取20
+ 【返 回】:
+ 【简 例】:K210_Servo_Control(20);  将舵机调至20°
+ 【说 明】:控制舵机
+*************************************************************************************************************/
 void K210_Servo_Control(int8_t angle)
 {
   uint8_t servo_buf[8] = {0x55, 0x02, 0x91, 0x03, 0x00, 0x00, 0x00, 0xBB}; // 给OpenMV发送舵机角度
@@ -1656,45 +1574,13 @@ void K210_Servo_Control(int8_t angle)
   ExtSRAMInterface.ExMem_Write_Bytes(0x6008, servo_buf, 8);
   delay(1000);
 }
-void Aquiare_Color(void)
-{
-  uint8_t Clear_Date[21] = {0}; // 用于清除缓存区
-  uint8_t JIEGUO[8] = {0};      // 用于清除缓存区
-  int8_t Move_Dsitrance = 0;    // 记录行进距离，用于后面回到原来位置
-  uint8_t Code_Number = 0;      // 记录真正识别的二维码个数
-  uint8_t location = 0;         // location:二维码数组下标
-  uint32_t timecontrol = 0;     // 获取当前Tim时间
-  delay(50);
-  while (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
-    ExtSRAMInterface.ExMem_Read_Bytes(0x6038, Clear_Date, 21); // 清空缓存区
-  delay(100);
-  timecontrol = millis();
-  while (1)
-  {
-    // 读取Zigbee数据
-    Zigbee_Recive();
-    // 读取二维码
-    if (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00) // 确认是否识别到二维码
-    {
-      ExtSRAMInterface.ExMem_Read_Bytes(0x6038, JIEGUO, 8); // 读取识别结果
-      color_reult[0] = JIEGUO[4];                           // 二维码一的颜色
-      color_reult[1] = JIEGUO[5];                           // 二维码二的颜色
-      break;
-    }
-
-    if ((millis() - timecontrol) > 4000) // 超时退出识别二维码
-    {
-      break;
-    }
-  }
-}
 /************************************************************************************************************
-【函 数 名】：	K210_Traffical_StartUp K210识别交通灯启动函数 【参数说明】：
-无参数     此条协议自定,问题在于k210与arduino通讯只能用0x91和0x92,STM32与Arduino通讯官方写死(估计)
-【返 回 值】：	无返回
-【简    例】：  K210_Traffical_StartUp()；
-************************************************************************************************************/
-uint8_t traffical_StartUp[8] = {0x55, 0x02, 0x91, 0x04, 0x00, 0x00, 0x00, 0xBB}; // 给K210发送识别二维码/交通灯
+ 【函 数】:K210_Traffical_StartUp
+ 【参 数】:
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:发送交通灯识别指令 此条协议自定,问题在于k210与arduino通讯只能用0x91和0x92,STM32与Arduino通讯官方写死(估计)
+*************************************************************************************************************/
 void K210_Traffical_StartUp(void)
 {
   Command.Judgment(traffical_StartUp); // 计算校验和
@@ -1702,10 +1588,12 @@ void K210_Traffical_StartUp(void)
   delay(200);
 }
 /************************************************************************************************************
- 【函 数 名】：	K210_Traffic_Disc K210识别交通灯任务 【参数说明】：
- flag：'A'、'B'、'C'、'D' 【返 回 值】：	无返回 【简    例】：
- K210_Traffic_Disc                           K210识别交通灯任务
- ************************************************************************************************************/
+ 【函 数】:K210_Traffic_Disc
+ 【参 数】:flag：'A'、'B'、'C'、'D' 
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:识别交通灯任务
+*************************************************************************************************************/
 void K210_Traffic_Disc(char flag) // 交通灯识别
 {
   uint8_t traffic_color[8];
@@ -1792,9 +1680,13 @@ void K210_Traffic_Disc(char flag) // 交通灯识别
   if (Back_Count != 0)
     delay(500);
 }
-// 视觉循迹
-uint8_t Data_OpenMVBuf[8];
-// 视觉循迹真正调用函数,此处就是调用了OpenMV_Track_Route()函数
+/************************************************************************************************************
+ 【函 数】:OpenMV_Track
+ 【参 数】:Car_Speed 车速   distance 距离   mode(已废弃)
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:视觉循迹
+*************************************************************************************************************/
 void OpenMV_Track(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
 {
   uint16_t code_value = 0;
@@ -1811,9 +1703,13 @@ void OpenMV_Track(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
     }
   }
 }
-// 循迹速度,码盘值，模式
-// mode = 0；循迹一段码盘值
-// mode = 1；循迹路线(此处以不用,下面函数用于循迹距离)
+/************************************************************************************************************
+ 【函 数】:OpenMV_Track_Route
+ 【参 数】:Car_Speed 车速   distance 距离   mode(已废弃)
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:视觉循迹
+*************************************************************************************************************/
 void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
 {
   uint32_t timeout = 0, track_time = 0;
@@ -2036,7 +1932,13 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
   }
   DCMotor.Stop();
 }
-// 视觉循迹，此处只用于调整车身,不用于循迹
+/************************************************************************************************************
+ 【函 数】:OpenMV_Track_Distance
+ 【参 数】:Car_Speed 车速   distance 距离
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:视觉调整
+*************************************************************************************************************/
 void OpenMV_Track_Distance(uint8_t Car_Speed, uint8_t distance)
 {
   uint32_t timeout = 0, track_time = 0;
@@ -2203,8 +2105,13 @@ void OpenMV_Track_Distance(uint8_t Car_Speed, uint8_t distance)
   }
   DCMotor.Stop();
 }
-// 特殊地形识别，现在模型只有特殊地形和非特殊地形，非特殊地形直接标记为白卡十字路口，
-// 后期可通过模型训练在优化,但关于视觉循迹的地方都得改
+/************************************************************************************************************
+ 【函 数】:Special_Road_Identify
+ 【参 数】:
+ 【返 回】:返回结果 1是0非
+ 【简 例】:
+ 【说 明】:特殊地形识别
+*************************************************************************************************************/
 uint8_t Special_Road_Identify(void)
 {
   if (!Find_SpeicalRoad)
@@ -2236,17 +2143,6 @@ uint8_t Special_Road_Identify(void)
       Find_SpeicalRoad = false;
       return Data_OpenMVBuf[3]; // 特殊地形识别结果
     }
-  }
-}
-// 视觉循迹特殊地形循迹调整车身
-void BackDis_GoSpace(uint8_t count, uint8_t distance, uint8_t mode)
-{
-  for (uint8_t i = 0; i < count; i++)
-  {
-    DCMotor.BackSelfDefine(47, 54, (int)(distance * Code_ToLength));
-    delay(500);
-    Space_Adjust(50, (int)(distance * Code_ToLength), mode);
-    delay(500);
   }
 }
 // 视觉循迹特殊地形循迹调整车身
@@ -2440,7 +2336,6 @@ cmd1、cmd2、cmd3负指令 【返 回 值】：	无返回 【简    例】：
 注意：此调方式可以发送数据给主车，但此命令主从车没做通讯
 (不建议使用，建议使用下列三个函数)
 ************************************************************************************************************/
-uint8_t Send_AGV[8] = {0X55, 0X01, 0X00, 0X00, 0X00, 0X00, 0X00, 0XBB};
 // 可以发送命令给主车，但不实用,主车也没写接收模块
 void Send_AGV_Zigbee(uint8_t cmd, uint8_t cmd1, uint8_t cmd2, uint8_t cmd3)
 {
@@ -2542,7 +2437,6 @@ void Sent_MultiDate_ToMainCar(uint8_t main_cmd, uint8_t *data, uint8_t length)
 【返 回 值】：	无返回
 【简    例】：  RoadGate_Control();                             打开道闸
 ************************************************************************************************************/
-uint8_t road_buf[] = {0x55, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void RoadGate_Control(uint8_t cmd)
 {
@@ -2625,7 +2519,6 @@ void RoadGate_Check(void)
 第二排数码管显示指定数据(六位十六进制) 【返 回 值】：	无返回 【简    例】：
 LEDDisplay_Date(01,0xff,0xff,0xff);            ED标志物第一排显示ffffff
 ************************************************************************************************************/
-uint8_t led_data_buf[8] = {0x55, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void LEDDisplay_Date(uint8_t cmd, uint8_t cmd1, uint8_t cmd2, uint8_t cmd3)
 {
@@ -2644,8 +2537,6 @@ void LEDDisplay_Date(uint8_t cmd, uint8_t cmd1, uint8_t cmd2, uint8_t cmd3)
 开启计时器 0x02:  清除计时器 【返 回 值】：	无返回 【简    例】：
 LEDDisplay_TimerControl(01);                    LED显示标志物开启计时模式
 ************************************************************************************************************/
-uint8_t led_time_buf[8] = {0x55, 0x04, 0x00, 0x00,
-                           0x00, 0x00, 0x00, 0xBB}; // LED显示
 
 void LEDDisplay_TimerControl(uint8_t cmd)
 {
@@ -2662,7 +2553,6 @@ void LEDDisplay_TimerControl(uint8_t cmd)
 【返 回 值】：	无返回
 【简    例】：  LED_Display_Distence();           LED标志物显示距离
 ************************************************************************************************************/
-uint8_t led_distance_buf[8] = {0x55, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void LEDDisplay_Distence(void)
 {
@@ -2685,8 +2575,6 @@ void LEDDisplay_Distence(void)
 layer：代表第几层 【返 回 值】：	无返回 【简    例】：
 StereoGarage_ToLayer('A',1);                车库A在到达第一层
 ************************************************************************************************************/
-uint8_t stereogarage_buf[8] = {0x55, 0x00, 0x00, 0x00,
-                               0x00, 0x00, 0x00, 0xBB}; // 立体车库（A/B）
 
 void StereoGarage_ToLayer(uint8_t garage_x,
                           uint8_t layer) // garage_x代表车库类型, Layer 代表层
@@ -2716,8 +2604,6 @@ void StereoGarage_ToLayer(uint8_t garage_x,
 0x02：请求返回立体车库前/后侧红外状态 【返 回 值】：	无返回 【简    例】：
 StereoGarage_Aquire_Return('A');                                车库A在第几层
 ************************************************************************************************************/
-uint8_t stereosarage_quire_buf[8] = {0x55, 0x00, 0x00, 0x00,
-                                     0x00, 0x00, 0x00, 0xBB}; // 立体车库（A/B）
 
 void StereoGarage_Aquire_Return(uint8_t garage_x, uint8_t cmd)
 {
@@ -2950,7 +2836,6 @@ void StereoGarage_Quire_InitFloor(uint8_t garage_x)
 【返 回 值】：	无返回
 【简    例】：  Voice_Announcements(1);                  播放“技能成才”
  ************************************************************************************************************/
-uint8_t voice_buf[8] = {0x55, 0x06, 0x10, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Voice_Announcements(uint8_t cmd)
 {
@@ -3008,7 +2893,6 @@ cmd:大风：0x00                                   多云：0x01 晴：0x02 小
                cmd1：温度 (十六进制数,两者都是) 【返 回 值】：	无返回 【简
 例】：  Voice_SetWeather(0x01,0x19);                    设置天气为多云，25℃
 ************************************************************************************************************/
-uint8_t voice_weather_buf[8] = {0x55, 0x06, 0x42, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Voice_SetWeather(uint8_t cmd, uint8_t cmd1)
 {
@@ -3025,7 +2909,6 @@ cmd: 0x01：查询 RTC 当前日期 0x02：查询 RTC 当前时间
 【返 回 值】：	 无返回
 【简    例】：   Voice_Check_Task(1);                         查询 RTC 当前日期
 ************************************************************************************************************/
-uint8_t voice_check_buf[8] = {0x55, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Voice_Check_Task(uint8_t cmd)
 {
@@ -3088,33 +2971,11 @@ void Voice_Check_Task(uint8_t cmd)
  test_buf:需要合成的文本,用小创软件 【返 回 值】：	无返回 【简    例】：
  Speech_Sounds_Ctr();
  ************************************************************************************************************/
-uint8_t test_buf[] = {
-    0xFD, 0x00, 0x0C, 0x01, 0x01, 0xC0, 0xEE, 0xB3,
-    0xBF, 0xD1, 0xEE, 0xCE, 0xDE, 0xB5, 0xD0}; // 需要合成的文本更改
 
 void Speech_Sounds_Ctr(void)
 {
   ExtSRAMInterface.ExMem_Write_Bytes(0x6180, test_buf, sizeof(test_buf));
 }
-uint8_t year_voice[] = {0xFD, 0x00, 0x14, 0x01, 0x01, 0xB5, 0xB1,
-                        0xC7, 0xB0, 0xCA, 0xB1, 0xBC, 0xE4, // 当前时间
-                        0xB6, 0xFE, 0xC1, 0xE3, 0xB6, 0xFE, 0xC8,
-                        0xFD, 0xC4, 0xEA}; // 二零二三年  17 18 19 20
-
-uint8_t date_voice[] = {
-    0xFD, 0x00, 0x10, 0x01, 0x01, 0xCA, 0xAE, 0xB6,
-    0xFE, 0xD4, 0xC2,                                // 十二月 5 6 7 8
-    0xC8, 0xFD, 0xCA, 0xAE, 0xD2, 0xBB, 0xC8, 0xD5}; // 三十一日11 12 13 14 15
-                                                     // 16
-
-uint8_t time_voice[] = {
-    0xFD, 0x00, 0x1A, 0x01, 0x01, 0xB6, 0xFE, 0xCA, 0xAE,
-    0xCB, 0xC4, 0xCA, 0xB1,                          // 二十三时  5  6  7  8  9 10
-    0xC8, 0xFD, 0xCA, 0xAE, 0xC8, 0xFD, 0xB7, 0xD6,  // 三十三分  13 14 15 16 17
-                                                     // 18
-    0xC8, 0xFD, 0xCA, 0xAE, 0xC1, 0xF9, 0xC3, 0xEB}; // 三十三秒  21 22 23 24 25
-                                                     // 26
-
 /************************************************************************************************************
  【函 数 名】：	Voice_RTC_Synthesis 播报天气温度 【参数说明】： year：年
  money：月 day：日                                        hour：时 minute：分
@@ -3261,7 +3122,6 @@ void Beacon_Infrare_Alarm(char *cmd)
  【返 回 值】：	无返回
  【简    例】： Zigbee_Beacon_SendQuire;
  ************************************************************************************************************/
-uint8_t beacon_sendquire[8] = {0x55, 0x07, 0x09, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Beacon_SendQuire(void)
 {
@@ -3275,8 +3135,6 @@ void Beacon_SendQuire(void)
  【返 回 值】：	无返回
  【简    例】： Beacon_Send_Front_Code(0x01,0x02,0x03);
  ************************************************************************************************************/
-uint8_t beacon_bendcode_buf[8] = {0x55, 0x07, 0x00, 0x00,
-                                  0x00, 0x00, 0x00, 0xBB};
 
 void Beacon_Send_Front_Code(uint8_t cmd, uint8_t cmd2, uint8_t cmd3)
 {
@@ -3328,7 +3186,6 @@ void Beacon_AllCode_Zigbee(uint8_t *cmd)
 秒间隔） 【返 回 值】：	无返回 【简    例】：
 TFT_PictureDisplay('A',0X00,0X01,0X00); TFT标志物A显示第一张图片
 ************************************************************************************************************/
-uint8_t tft_picture_buf[] = {0x55, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void TFT_PictureDisplay(char name, uint8_t cmd1, uint8_t cmd2)
 {
@@ -3362,8 +3219,6 @@ void TFT_PictureDisplay(char name, uint8_t cmd1, uint8_t cmd2)
 【返 回 值】：	无返回
 【简    例】：  TFT_Licenseplate_Front('A',0X30,0X31,0X32);   TFT标志位A显示012
 ************************************************************************************************************/
-uint8_t tft_licenseplate_buf[] = {0x55, 0x00, 0x20, 0x00,
-                                  0x00, 0x00, 0x00, 0xBB};
 
 void TFT_Licenseplate_Front(char name, uint8_t cmd1, uint8_t cmd2,
                             uint8_t cmd3)
@@ -3450,7 +3305,6 @@ TFT标志物 cmd1:    0x00:计时显示关闭                 0x01：计时显�
 0x02：计时显示清零 【返 回 值】：	无返回 【简    例】：
 TFT_TimeDisplay('A',0x01);                TFT标志位A计时显示打开
 ************************************************************************************************************/
-uint8_t tft_time_buf[] = {0x55, 0x00, 0x30, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void TFT_TimeDisplay(char name, uint8_t cmd)
 {
@@ -3480,7 +3334,6 @@ void TFT_TimeDisplay(char name, uint8_t cmd)
 TFT标志物 a：0xxx                                b:   0xx c: 0xx 【返 回 值】：
 无返回 【简    例】：  TFT_HEXDisplay('A',0X12,0X34,0X56); TFT标志物A显示123456
 ************************************************************************************************************/
-uint8_t tft_date_buf[] = {0x55, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void TFT_HEXDisplay(char name, uint8_t a, uint8_t b, uint8_t c)
 {
@@ -3512,7 +3365,6 @@ void TFT_HEXDisplay(char name, uint8_t a, uint8_t b, uint8_t c)
 'B': TFT标志物           'C': TFT标志物 【返 回 值】：	无返回 【简    例】：
 TFT_Distance_Display('A');          TFT标志物A显示距离单位（厘米）
 ************************************************************************************************************/
-uint8_t tft_distance_buf[] = {0x55, 0x00, 0x50, 0x00, 0x00, 0x00, 0x00, 0xbb};
 
 void TFT_Distance_Display(char name)
 {
@@ -3550,7 +3402,6 @@ void TFT_Distance_Display(char name)
 【简    例】：  TFT_DisplayTraffic('A');          距离为4、5为，格式0x0x 0xxx
 (十进制格式)
 ************************************************************************************************************/
-uint8_t tft_traffic_buf[8] = {0x55, 0x00, 0x60, 0x00, 0x00, 0x00, 0x00, 0xbb};
 
 void TFT_DisplayTraffic(char name, uint8_t cmd)
 {
@@ -3665,7 +3516,6 @@ void Streetlight_SetLevel(int led_x)
 【返 回 值】：	无返回
 【简    例】：  Wireless_Control(1);          开启无线充电功能
 ************************************************************************************************************/
-uint8_t wireless_buf[8] = {0x55, 0x0a, 0x01, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Wireless_Control(uint8_t cmd)
 {
@@ -3682,7 +3532,6 @@ void Wireless_Control(uint8_t cmd)
 【返 回 值】：	无返回
 【简    例】：  Wireless_Open();                            开启无线充电功能
 ************************************************************************************************************/
-uint8_t wireless_buf_5_2[8] = {0x55, 0x0A, 0X00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Wireless_Open(uint8_t *cmd)
 {
@@ -3719,7 +3568,6 @@ void Wireless_Change(uint8_t *cmd)
 【返 回 值】：	无返回
 【简    例】：  ETC_Control(2,2);              左侧闸门下降，右侧闸门下降
 ************************************************************************************************************/
-uint8_t etc_buf[8] = {0X55, 0x0C, 0x08, 0x00, 0x00, 0x00, 0X00, 0XBB};
 
 void ETC_Control(uint8_t cmd, uint8_t cmd1)
 {
@@ -3737,7 +3585,6 @@ void ETC_Control(uint8_t cmd, uint8_t cmd1)
                flag：C：识别智能交通路灯C D：识别智能交通路灯D 【返 回 值】：
  无返回 【简    例】： Traffic_Distinguish（'A'） 交通灯A进入识别模式
  ************************************************************************************************************/
-uint8_t traffic_buf[] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Traffic_Distinguish(char flag)
 {
@@ -3772,7 +3619,6 @@ void Traffic_Distinguish(char flag)
                flag：C：识别智能交通路灯C D：识别智能交通路灯D 【返 回 值】：
  无返回 【简    例】： Traffic_ResponseResult（'A'） 交通路灯A识别结果请求确认
  ************************************************************************************************************/
-uint8_t traffic_result_buf[] = {0x55, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xBB};
 void Traffic_ResponseResult(char flag)
 {
   switch (flag)
@@ -3820,7 +3666,6 @@ void Traffic_ResponseResult(char flag)
 【返 回 值】：	无返回
 【简    例】：  Special_Send_Check(); 发送查询车辆通行状态
 ************************************************************************************************************/
-uint8_t special_terrain[] = {0x55, 0x10, 0x01, 0x00, 0x00, 0x00, 0x00, 0xBB};
 
 void Special_Send_Check(void)
 {
@@ -3837,7 +3682,6 @@ plate：六位车牌,                                     coord:信息坐标 【
 值】：	无返回 【简    例】：  RotationLED_PlateAndCoord();
 旋转LED显示车牌和坐标
 ************************************************************************************************************/
-uint8_t infare_rotationled_buf[6] = {0xFF, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 void RotationLED_PlateAndCoord(uint8_t plate[6], uint8_t coord[2])
 {
@@ -4035,8 +3879,6 @@ word,word1 :汉字文本GBK编码 cmd：0x55结束文字累加，0x00没有结�
 值】：	无返回 【简    例】：  RotationLED_Incresae_WordZigbee(1);
 结束累加不清除,现有显示内容
 ************************************************************************************************************/
-uint8_t rotationled_zigbee_buf[8] = {0x55, 0x11, 0x31, 0x00,
-                                     0x00, 0x00, 0x00, 0xBB};
 
 void RotationLED_Incresae_WordZigbee(uint8_t word, uint8_t word1, uint8_t cmd)
 {
@@ -4090,7 +3932,6 @@ void RotationLED_ClearWord(uint8_t cmd)
 cmd:0为随机播放识别                                      1：指定播报识别 【返 回
 值】：	无返回 【简    例】：  Speech_Disc(0); 随机播报识别
 ************************************************************************************************************/
-uint8_t trm_buf[] = {0xAF, 0x06, 0x00, 0x02, 0x00, 0x00, 0x01, 0xBB};
 
 void Speech_Disc(uint8_t cmd)
 {
@@ -4400,7 +4241,7 @@ void Car_Move_SecondRoute(car_state *car)
       // 任务(多次经过同一点,可以尝试Task_B7写法,所有任务都得看方向调整,且调整后根据路径自行调整回来或者改变方向)
       Task_Detal(car[Recode_FristRoute].car_x, car[Recode_FristRoute].car_y);
       // 方向
-      Auto_Forward(x, y, track_mode);
+      Auto_Forward(x, y);
       // 循迹
       CarTrack(50, track_mode);
     }
@@ -4475,7 +4316,7 @@ void Car_Move_FirstRoute(car_state *car)
       // 任务
       // Task_Detal(car[Recode_FristRoute].car_x, car[Recode_FristRoute].car_y);
       // 方向更改
-      Auto_Forward(x, y, track_mode);
+      Auto_Forward(x, y);
       // 循迹
       CarTrack(30, track_mode);
     }
@@ -4563,37 +4404,6 @@ void Copy_Route(car_state *car, car_state *second_route,
   }
   CarFristRouteNumber = *route_number;
   Recode_FristRoute = 0;
-}
-
-/************************************************************************************************************
- 【函 数 名】：	KEY_Handler	            按键处理函数F2
-
- 【参数说明】：	K_value                 按键值
- 【返 回 值】：	无返回
- 【简    例】： KEY_Handler();
- ************************************************************************************************************/
-uint8_t OLed_Display[8] = {0x55, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0xbb};
-uint8_t WireCode[3] = {0xA1, 0x23, 0xB4};
-void KEY_Handler(uint8_t k_value)
-{
-  switch (k_value)
-  {
-  case 1:
-    move_flag = 1;
-    Serial.println("move");
-    break;
-  case 2:
-    Normal_Track(30);
-    break;
-  case 3:
-    Serial.print(Special_Road_Identify());
-    break;
-  case 4:
-    RotationLED_Traffic(1);
-    break;
-  default:
-    break;
-  }
 }
 
 /**********************************************代码功能模块 * Start*****************************************************************/
