@@ -119,7 +119,7 @@ uint8_t traffic_sign = 0;        // 发送主车命令标志位
 uint8_t data_complete = 0;       // 主车数据接受完成
 uint8_t Find_SpeicalRoad = true; // 寻找特殊地形
 uint8_t find_space = 0;          // 寻找特殊地形标志位
-uint8_t track_mode = 0;          // 视觉循迹与红外循迹切换，一般写在按键里，0为红外，1为视觉
+uint8_t track_mode = 1;          // 视觉循迹与红外循迹切换，一般写在按键里，0为红外，1为视觉 *********************************************
 uint8_t cross_spacefloor = 0;    // 寻找完特殊形式,继续循迹
 
 // 小车路径方向
@@ -290,7 +290,7 @@ void KEY_Handler(uint8_t k_value)
     DCMotor.Go(30, 980); // 前进980码，直接冲过特殊地形
     break;
   case 3:
-    Normal_Track(30, TrackMode_NORMAL, 0);
+    OpenMV_Track_2(30);
     break;
   case 4:
     adjust_car2(3, 20, 0);
@@ -1172,7 +1172,7 @@ void CarTrack(uint8_t speed, uint8_t mode)
   }
   else
   {
-    Normal_Track(speed, 0); // 红外循迹
+    Normal_Track(speed, TrackMode_NORMAL, 0); // 红外循迹
     delay(500);
     DCMotor.Go(speed, 380);
   }
@@ -1218,6 +1218,7 @@ void Normal_Track(uint8_t speed, TrackMode_t mode, uint8_t distance)
       }
       else
       { // 正常循迹
+        Serial.println(getOffset(ALL_TRACK));
         Pid.Calculate_pid(getOffset(ALL_TRACK));
         DCMotor.SpeedCtr(speed + Pid.PID_value, speed - Pid.PID_value);
       }
@@ -1236,7 +1237,16 @@ void Normal_Track(uint8_t speed, TrackMode_t mode, uint8_t distance)
       }
       break;
     case TrackMode_BACK_TO_CROSS:
-
+      if ((H8[0] + Q7[0] + H8[7] + Q7[6]) < 2)
+      { // 到十字路口
+        Pid.PidData_Clear();
+        DCMotor.Stop();
+        return;
+      }
+      else
+      {
+        DCMotor.Back(speed);
+      }
       break;
     case TrackMode_ENCODER_SpecialRoad:
       if ((H8[0] + Q7[0] + H8[7] + Q7[6]) < 2)
@@ -2156,6 +2166,118 @@ void OpenMV_Track(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
     }
   }
 }
+
+/************************************************************************************************************
+ 【函 数】:OpenMV_Track_2
+ 【参 数】:Car_Speed 车速   distance 距离   mode(已废弃)
+ 【返 回】:
+ 【简 例】:
+ 【说 明】:视觉循迹
+*************************************************************************************************************/
+void OpenMV_Track_2(uint8_t Car_Speed)
+{
+  int32_t code_value = 0;
+  uint8_t firstbit[8] = {0}, tp = 0, track_value = 0, clear_buf[21] = {0};
+  uint8_t cross_flag = 0;
+  uint8_t whilt_flag = 0;
+  uint8_t black_offset = 0;
+  uint8_t black_angle = 0;
+  int16_t long_C = 0;
+  uint8_t binary[7];
+  while (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
+    ExtSRAMInterface.ExMem_Read_Bytes(0x6038, clear_buf, 21);
+  Clear_Array_Date(clear_buf, 21);
+
+  if (find_space == 0)
+    Space_Distinguish();
+
+  delay(50);
+  if (cross_spacefloor != 1)
+  {
+    K210_TrackControl(0x01);
+    delay(50);
+    while (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
+      ExtSRAMInterface.ExMem_Read_Bytes(0x6038, clear_buf, 21);
+    Clear_Array_Date(clear_buf, 21);
+
+    delay(200);
+    K210_TrackControl(0x01);
+    delay(50);
+    while (1)
+    {
+      if (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
+      {
+        ExtSRAMInterface.ExMem_Read_Bytes(0x6038, Data_OpenMVBuf, 8);
+        track_value = Data_OpenMVBuf[6];
+        whilt_flag = Data_OpenMVBuf[3];
+        if (OpenMV_TrackValue_Type(track_value) == 5)
+        {
+          DCMotor.Stop();
+          delay(300);
+          K210_TrackControl(0x02);
+          break;
+        }
+        if (!(whilt_flag == 1 && OpenMV_TrackValue_Type(track_value) != 6))
+        {
+          tp = 0;
+          firstbit[0] = 0;
+          for (size_t i = 0x01; i < 0x100; i <<= 1)
+          {
+            if ((track_value & i) == 0)
+            {
+              firstbit[tp++] = uint8_t(i);
+            }
+          }
+
+          if (tp <= 0x05)
+          {
+            for (int i = 0; i < 7; i++)
+            {
+              binary[i] = !((firstbit[0] >> (6 - i)) & 1);
+            }
+            Pid.Calculate_pid(getOffset_K210(binary));
+            DCMotor.SpeedCtr(Car_Speed + Pid.PID_value, Car_Speed - Pid.PID_value);
+          }
+        }
+        else
+        {
+          DCMotor.SpeedCtr(50, 50);
+          while (1)
+          {
+            if (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00) // 检测循迹状态
+            {
+              ExtSRAMInterface.ExMem_Read_Bytes(0x6038, Data_OpenMVBuf, 8); // 读取K210循迹
+              track_value = Data_OpenMVBuf[6];                              // 循迹值
+              whilt_flag = Data_OpenMVBuf[3];                               // 白边判断
+              if (whilt_flag == 0)                                          // 由白边到没白边
+              {
+                if (OpenMV_TrackValue_Type(Data_OpenMVBuf[6]) != 6 || OpenMV_TrackValue_Type(Data_OpenMVBuf[4]) != 6)
+                {
+                  cross_flag = 1;
+                  DCMotor.Stop();
+                  delay(50);
+                  K210_TrackControl(0x02);
+                  delay(500);
+                  Space_Distinguish(); // 特殊地形识别
+                }
+                break;
+              }
+            }
+          }
+          if (cross_flag == 1) // 白卡十字路口或者过完特殊地形结束
+          {
+            cross_flag = 0;
+            DCMotor.Stop();
+            delay(50);
+            K210_TrackControl(0x02);
+            break;
+          }
+        }
+      }
+    }
+  }
+  DCMotor.Stop();
+}
 /************************************************************************************************************
  【函 数】:OpenMV_Track_Route
  【参 数】:Car_Speed 车速   distance 距离   mode(已废弃)
@@ -2175,11 +2297,12 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
   uint8_t black_angle = 0;
   uint8_t whilt_value = 0;
   int16_t long_C = 0;
+  uint8_t binary[7];
+  uint8_t center = 122;
   // 清空串口缓存
   while (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
     ExtSRAMInterface.ExMem_Read_Bytes(0x6038, clear_buf, 21);
   Clear_Array_Date(clear_buf, 21); // 清空数组 Data_OpenMVBuf
-  Serial.println(find_space);
 
   if (find_space == 0)
     Space_Distinguish(); // 特殊地形识别
@@ -2207,8 +2330,8 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
         // 如果没有识别到白黑白
         if (OpenMV_TrackValue_Type(Data_OpenMVBuf[6]) != 6 || OpenMV_TrackValue_Type(Data_OpenMVBuf[4]) != 6 || Count_BlackNumber(Data_OpenMVBuf[6], 8) > 2 || Count_BlackNumber(Data_OpenMVBuf[4], 8) > 2)
         {
-          // DCMotor.Back(50,150);//倒退150
-          DCMotor.BackSelfDefine(47, 54, 150);
+          DCMotor.Back(50, 150); // 倒退150
+          // DCMotor.BackSelfDefine(47, 54, 150);
           timeout += 250;
           delay(500);
         }
@@ -2219,22 +2342,11 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
     while (ExtSRAMInterface.ExMem_Read(0x6038) != 0x00)
       ExtSRAMInterface.ExMem_Read_Bytes(0x6038, clear_buf, 21);
     Clear_Array_Date(clear_buf, 21); // 清空数组 Data_OpenMVBuf
-    // 模式选择
-    switch (mode)
-    {
-    case 0:
-      break;
-    case 1:
-      timeout = timeout + (int)(29 * distance);
-      break;
-    default:
-      break;
-    }
 
     delay(200);
     K210_TrackControl(0x01); // 发送循迹请求
     delay(50);
-    DCMotor.SpeedCtr(Car_Speed - 3, Car_Speed + 4);
+    DCMotor.SpeedCtr(Car_Speed, Car_Speed);
     track_time = millis();
     // 真正循迹部分
     while (1)
@@ -2259,7 +2371,6 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
         whilt_flag = Data_OpenMVBuf[3];   // 白边判断
         foword_state = OpenMV_TrackValue_Type(track_value);
         whilt_value = (track_value & 0x3C);
-        Serial.println(black_offset);
         if (OpenMV_TrackValue_Type(track_value) == 5)
         {
           DCMotor.Stop();
@@ -2299,13 +2410,13 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
             switch (firstbit[0])
             {
             case 0x00:
-              DCMotor.SpeedCtr(47, 54);
+              DCMotor.SpeedCtr(50, 50);
               break;
             case 0x01:
-              DCMotor.SpeedCtr(50, -40);
+              DCMotor.SpeedCtr(40, -40);
               break;
             case 0x02:
-              DCMotor.SpeedCtr(40, -30);
+              DCMotor.SpeedCtr(35, -35);
               break;
             case 0x04:
               // 可能在循迹在直线上,精细化然后使车身调整
@@ -2313,32 +2424,32 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
               break;
             case 0x08:
               // 可能在循迹在直线上,精细化然后使车身调整
-              if (black_offset > 157)
+              if (black_offset > center + 30)
                 DCMotor.SpeedCtr(Car_Speed + 30, Car_Speed - 30);
-              else if (black_offset > 147)
+              else if (black_offset > center + 20)
                 DCMotor.SpeedCtr(Car_Speed + 20, Car_Speed - 20);
-              else if (black_offset > 135)
+              else if (black_offset > center + 10)
                 DCMotor.SpeedCtr(Car_Speed + 10, Car_Speed - 10);
-              else if (black_offset >= 121 && black_offset <= 135)
-                DCMotor.SpeedCtr(Car_Speed - 3, Car_Speed + 4);
-              else if (black_offset >= 112)
+              else if (black_offset >= center - 7 && black_offset <= center + 7)
+                DCMotor.SpeedCtr(Car_Speed, Car_Speed);
+              else if (black_offset >= center - 10)
                 DCMotor.SpeedCtr(Car_Speed - 10, Car_Speed + 10);
-              else if (black_offset >= 97)
+              else if (black_offset >= center - 20)
                 DCMotor.SpeedCtr(Car_Speed - 20, Car_Speed + 20);
-              else if (black_offset < 97)
+              else if (black_offset < center - 30)
                 DCMotor.SpeedCtr(Car_Speed - 30, Car_Speed + 30);
               break;
             case 0x10:
-              DCMotor.SpeedCtr(Car_Speed - 20, Car_Speed + 35);
+              DCMotor.SpeedCtr(Car_Speed - 20, Car_Speed + 20);
               break;
             case 0x20:
-              DCMotor.SpeedCtr(-30, 40);
+              DCMotor.SpeedCtr(-35, 35);
               break;
             case 0x40:
-              DCMotor.SpeedCtr(-40, 50);
+              DCMotor.SpeedCtr(-45, 45);
               break;
             case 0x80:
-              DCMotor.SpeedCtr(-40, 50);
+              DCMotor.SpeedCtr(-45, 45);
               break;
             }
           }
@@ -2557,6 +2668,52 @@ void OpenMV_Track_Distance(uint8_t Car_Speed, uint8_t distance)
     }
   }
   DCMotor.Stop();
+}
+/************************************************************************************************************
+ 【函 数】:getOffset_K210
+ 【参 数】:arr 循迹灯数组
+ 【返 回】:有循迹灯得到的误差值 用于pid计算
+ 【简 例】:getOffset([1,1,1,1,1,1,1,0,1,1,1,1,1,1,1]);  返回 0
+ 【说 明】:循迹灯算法
+  1.循迹灯状态             2.将两个数组按以下顺序打为一个数组   3.得到数组并通过算法得值
+  Q7 [1,1,1,0,1,1,1]       [2,4,6,8,10,12,14]            [1,1,1,1,1,1,1,0,1,1,1,1,1,1,1] -> 0
+  H8[1,1,1,1,1,1,1,1]     [1,3,5,7,9,11,13,15]           [1,1,1,1,1,1,1,0,0,1,1,1,1,1,1] -> 0.5
+  简单的说就是通过循迹灯的15位值得到一个值 比如往左偏就是-10 右偏就是+10 正中间就是0  用这个值带入pid去算
+*************************************************************************************************************/
+float getOffset_K210(uint8_t arr[])
+{
+  int8_t all_weights[7] = {0};
+  for (uint8_t i = 1; i < 6; i++)
+  {
+    for (uint8_t j = i - 1; j <= i + 1; j++)
+    {
+      all_weights[i] += arr[j];
+    }
+  }
+
+  int8_t minimum = 3;
+  for (uint8_t i = 1; i < 6; i++)
+  {
+    if (minimum > all_weights[i])
+      minimum = all_weights[i];
+  }
+
+  int8_t errorValue1 = 0, errorValue2 = 6;
+  for (;;)
+  {
+    if (all_weights[++errorValue1] == minimum)
+      break;
+  }
+  for (;;)
+  {
+    if (all_weights[--errorValue2] == minimum)
+      break;
+  }
+
+  // 平均之后计算误差值
+  float errorValue = 3.0 - (errorValue1 + errorValue2) / 2.0;
+
+  return errorValue;
 }
 /************************************************************************************************************
  【函 数】:Special_Road_Identify
