@@ -290,7 +290,7 @@ void KEY_Handler(uint8_t k_value)
     DCMotor.Go(30, 980); // 前进980码，直接冲过特殊地形
     break;
   case 3:
-    OpenMV_Track_2(30);
+    OpenMV_Track_Route(30, 0, 0);
     break;
   case 4:
     adjust_car2(3, 20, 0);
@@ -2424,20 +2424,16 @@ void OpenMV_Track_Route(uint8_t Car_Speed, uint8_t distance, uint8_t mode)
               break;
             case 0x08:
               // 可能在循迹在直线上,精细化然后使车身调整
-              if (black_offset > center + 30)
-                DCMotor.SpeedCtr(Car_Speed + 30, Car_Speed - 30);
-              else if (black_offset > center + 20)
-                DCMotor.SpeedCtr(Car_Speed + 20, Car_Speed - 20);
-              else if (black_offset > center + 10)
+              if (black_offset > center + 20)
                 DCMotor.SpeedCtr(Car_Speed + 10, Car_Speed - 10);
-              else if (black_offset >= center - 7 && black_offset <= center + 7)
+              else if (black_offset > center + 10)
+                DCMotor.SpeedCtr(Car_Speed + 5, Car_Speed - 5);
+              else if (black_offset >= center - 5 && black_offset <= center + 5)
                 DCMotor.SpeedCtr(Car_Speed, Car_Speed);
               else if (black_offset >= center - 10)
-                DCMotor.SpeedCtr(Car_Speed - 10, Car_Speed + 10);
+                DCMotor.SpeedCtr(Car_Speed - 5, Car_Speed + 5);
               else if (black_offset >= center - 20)
-                DCMotor.SpeedCtr(Car_Speed - 20, Car_Speed + 20);
-              else if (black_offset < center - 30)
-                DCMotor.SpeedCtr(Car_Speed - 30, Car_Speed + 30);
+                DCMotor.SpeedCtr(Car_Speed - 10, Car_Speed + 10);
               break;
             case 0x10:
               DCMotor.SpeedCtr(Car_Speed - 20, Car_Speed + 20);
